@@ -1,0 +1,11 @@
+# Build folders
+bin/
+obj/
+
+# Go coverage files
+*.out
+*.log
+
+# Configuration and data
+configs/*.toml
+data/
