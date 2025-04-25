@@ -15,10 +15,21 @@ type Config struct {
    UI      UIConfig      `toml:"ui"`
 }
 
+// ICEServerConfig holds ICE server configuration (STUN/TURN URLs and optional credentials).
+type ICEServerConfig struct {
+   URLs       []string `toml:"urls"`
+   Username   string   `toml:"username,omitempty"`
+   Credential string   `toml:"credential,omitempty"`
+}
+
 // NetworkConfig holds network-related settings.
 type NetworkConfig struct {
-   BootstrapPeers []string `toml:"bootstrapPeers"`
-   StunServers    []string `toml:"stunServers"`
+   // BootstrapPeers are peer addresses (host:port) used for initial signaling.
+   BootstrapPeers []string          `toml:"bootstrapPeers"`
+   // StunServers is a list of STUN server URLs (for backward compatibility).
+   StunServers    []string          `toml:"stunServers,omitempty"`
+   // IceServers is a list of ICE server configurations for NAT traversal.
+   IceServers     []ICEServerConfig `toml:"iceServers,omitempty"`
 }
 
 // DHTConfig holds settings for the DHT datastore.
