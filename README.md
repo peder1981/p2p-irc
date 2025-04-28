@@ -22,6 +22,35 @@ go mod tidy
 go run cmd/p2p-irc/main.go --config configs/config.toml --port 9001
 ```
 
+## Descoberta Automática de Peers
+
+O p2p-irc oferece dois modos de descoberta automática de peers:
+
+- **LAN (Rede Local):** utiliza broadcast UDP na mesma porta TCP especificada (por exemplo, `--port 9001`).  
+  Ao executar em várias máquinas na mesma rede local com a mesma porta, elas se encontrarão e conectarão automaticamente.
+
+- **Internet:** baseia-se em peers sementes configurados em `configs/config.toml`.  
+  No arquivo de configuração, defina:
+
+  ```toml
+  [network]
+  bootstrapPeers = ["example.com:9001", "1.2.3.4:9001"]
+
+  # Servidores ICE (STUN/TURN) para NAT traversal
+  [[network.iceServers]]
+  urls = ["stun:stun.l.google.com:19302"]
+
+  [[network.iceServers]]
+  urls = ["turn:turn.exemplo.com:3478"]
+  username = "usuario"
+  credential = "senha"
+  ```
+
+  O cliente usará essas seeds para:
+  1. Estabelecer uma conexão TCP de sinalização com cada peer listado.
+  2. Negociar um canal WebRTC DataChannel via ICE (STUN/TURN) para NAT traversal.
+  Inclua servidores TURN para suportar NATs simétricos ou quando STUN não for suficiente.
+
 ## Build multi-plataforma
 
 Para gerar executáveis para diferentes sistemas operacionais e arquiteturas, use o script:

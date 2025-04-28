@@ -11,6 +11,7 @@ import (
     "encoding/hex"
    "sync"
    "github.com/pion/webrtc/v3"
+  "time"
 
     "github.com/peder1981/p2p-irc/internal/config"
     "github.com/peder1981/p2p-irc/internal/crypto"
@@ -92,6 +93,20 @@ func main() {
         defer mu.Unlock()
         conns = append(conns, c)
     }
+    // addAndListen adds a connection and starts a goroutine to read incoming messages
+    addAndListen := func(c net.Conn) {
+        addConn(c)
+        go func(c net.Conn) {
+            r := bufio.NewReader(c)
+            for {
+                line, err := r.ReadString('\n')
+                if err != nil {
+                    return
+                }
+                recvCh <- peerMessage{Conn: c, Text: strings.TrimSpace(line)}
+            }
+        }(c)
+    }
 
     // Accept incoming
     go func() {
@@ -107,6 +122,58 @@ func main() {
                     recvCh <- peerMessage{Conn: c, Text: strings.TrimSpace(line)}
                 }
             }(c)
+        }
+    }()
+
+    // Peer discovery on local network via UDP broadcast
+    go func() {
+        // Determine local IP for announcing
+        myIP := getOutboundIP()
+        myAddr := fmt.Sprintf("%s:%d", myIP, *port)
+        // Listen for discovery messages on UDP port same as TCP port
+        udpAddr := net.UDPAddr{IP: net.IPv4zero, Port: *port}
+        uc, err := net.ListenUDP("udp4", &udpAddr)
+        if err != nil {
+            fmt.Fprintf(os.Stderr, "erro iniciar discovery UDP: %v\n", err)
+            return
+        }
+        defer uc.Close()
+        // Broadcast our address periodically
+        ticker := time.NewTicker(3 * time.Second)
+        defer ticker.Stop()
+        baddr := net.UDPAddr{IP: net.IPv4bcast, Port: *port}
+        go func() {
+            for range ticker.C {
+                uc.WriteToUDP([]byte(myAddr), &baddr)
+            }
+        }()
+        buf := make([]byte, 1024)
+        for {
+            n, _, err := uc.ReadFromUDP(buf)
+            if err != nil {
+                continue
+            }
+            peerAddr := string(buf[:n])
+            if peerAddr == myAddr {
+                continue
+            }
+            mu.Lock()
+            already := false
+            for _, c := range conns {
+                if c.RemoteAddr().String() == peerAddr {
+                    already = true
+                    break
+                }
+            }
+            mu.Unlock()
+            if already {
+                continue
+            }
+            c, err := transport.Dial(peerAddr, iceServers)
+            if err != nil {
+                continue
+            }
+            addAndListen(c)
         }
     }()
 
@@ -490,4 +557,14 @@ func newID() string {
         panic("erro ao gerar ID de mensagem: " + err.Error())
     }
     return hex.EncodeToString(b)
+}
+// getOutboundIP retrieves the preferred outbound IP of this machine
+func getOutboundIP() string {
+    conn, err := net.Dial("udp", "8.8.8.8:80")
+    if err != nil {
+        return "127.0.0.1"
+    }
+    defer conn.Close()
+    localAddr := conn.LocalAddr().(*net.UDPAddr)
+    return localAddr.IP.String()
 }
