@@ -123,23 +123,46 @@ O P2P IRC suporta transferência direta de arquivos entre usuários através do 
 
 Funcionalidades:
 - Transferência direta de arquivos entre usuários
+- Transferência de diretórios completos
 - Barra de progresso visual
+- Pause/Resume de transferências em andamento
 - Retomada de transferências interrompidas
 - Verificação de integridade via SHA-256
-- Suporte a múltiplos arquivos
-- Cache de peers conhecidos
+- Suporte a múltiplos arquivos simultâneos
+- Gerenciamento de fila de transferências
+- Estatísticas em tempo real (velocidade, ETA)
+- Logging detalhado para depuração
+- Persistência de estado para recuperação após reinicialização
 
 Comandos disponíveis:
 
 - `/dcc send <arquivo1,arquivo2,...> <usuário>`: Envia um ou mais arquivos para outro usuário
+- `/dcc senddir <diretório> <usuário>`: Envia um diretório completo para outro usuário
 - `/dcc list`: Lista todas as transferências ativas
+- `/dcc pause <id>`: Pausa uma transferência em andamento
+- `/dcc resume <id>`: Retoma uma transferência pausada
+- `/dcc cancel <id>`: Cancela uma transferência
+- `/dcc info <id>`: Exibe informações detalhadas sobre uma transferência
+- `/dcc verify <id>`: Verifica a integridade de uma transferência concluída
+- `/dcc clear`: Remove transferências completadas ou falhas da lista
 
-Quando um usuário tenta enviar um arquivo, o destinatário receberá uma notificação e poderá aceitar a transferência.
-Se a transferência for interrompida, ela pode ser retomada automaticamente quando reiniciada.
+#### Configuração Avançada
 
-O diretório padrão para downloads é `./downloads` na pasta onde o programa está sendo executado.
+O DCC pode ser configurado através do arquivo de configuração:
 
-### Exemplos
+```toml
+[dcc]
+downloadDir = "./downloads"     # Diretório para downloads
+bufferSize = 32768              # Tamanho do buffer em bytes (32KB padrão)
+maxConcurrent = 5               # Máximo de transferências simultâneas
+verifyHash = true               # Verifica integridade via hash SHA-256
+logEnabled = false              # Habilita logging detalhado
+logFile = "./dcc.log"           # Arquivo de log (vazio para stdout)
+autoResume = true               # Retoma automaticamente transferências interrompidas
+persistenceFile = "dcc_state.json" # Arquivo para persistência de estado
+```
+
+#### Exemplos
 
 ```bash
 # Enviar um arquivo
@@ -148,8 +171,26 @@ O diretório padrão para downloads é `./downloads` na pasta onde o programa es
 # Enviar múltiplos arquivos
 /dcc send foto1.jpg,foto2.jpg,doc.pdf usuario1
 
+# Enviar um diretório completo
+/dcc senddir ./fotos usuario1
+
 # Listar transferências
 /dcc list
+
+# Pausar uma transferência
+/dcc pause 12345
+
+# Retomar uma transferência
+/dcc resume 12345
+
+# Cancelar uma transferência
+/dcc cancel 12345
+
+# Ver informações detalhadas
+/dcc info 12345
+
+# Verificar integridade de um arquivo recebido
+/dcc verify 12345
 ```
 
 ## Scripts e Alias
