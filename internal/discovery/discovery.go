@@ -482,6 +482,24 @@ func (d *Discovery) GetPeers() []dht.Node {
     return peers
 }
 
+// GetKnownPeers retorna os endereços de todos os peers conhecidos
+func (d *Discovery) GetKnownPeers() []string {
+    d.mu.RLock()
+    defer d.mu.RUnlock()
+    
+    var addresses []string
+    for _, bucket := range d.dht.GetBuckets() {
+        for _, node := range bucket.GetNodes() {
+            addr := node.Addr.String()
+            if addr != "" {
+                addresses = append(addresses, addr)
+            }
+        }
+    }
+    
+    return addresses
+}
+
 // generateInstanceID gera um ID único para esta instância
 func generateInstanceID() string {
     b := make([]byte, 16)

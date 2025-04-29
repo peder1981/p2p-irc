@@ -1,143 +1,104 @@
-# p2p-irc
+# P2P-IRC
 
-Cliente de chat estilo IRC totalmente descentralizado em Go.
+Cliente IRC peer-to-peer com interface TUI moderna e funcional.
 
-Este monorepo contém:
+## Principais Funcionalidades
 
-- cmd/p2p-irc: CLI principal com suporte a chat P2P
-- cmd/p2p-irc-tui: Interface TUI alternativa (experimental)
-- internal/config: Gerenciamento de configurações TOML
-- internal/crypto: Gestão de identidade e chaves
-- internal/dcc: Transferência de arquivos via DCC
-- internal/dht: Descoberta de peers via DHT
-- internal/discovery: Descoberta automática via mDNS/DNS-SD
-- internal/network: Gerenciamento de conexões
-- internal/portmanager: Gerenciamento de portas e UPnP
-- internal/scripts: Sistema de scripts e alias
-- internal/storage: Persistência de dados
-- internal/transport: Camada de transporte com WebRTC
-- internal/ui: Interface de usuário (TUI)
+- **Interface Unificada**: Uma única interface intuitiva e bem organizada
+- **Layout de Duas Colunas**: Canais e peers à esquerda, chat e logs à direita
+- **Notificações Visuais**: Indicadores para canais com mensagens não lidas
+- **Histórico Persistente**: Armazenamento e carregamento automático do histórico de mensagens
+- **Comandos IRC Completos**: Suporte para todos os comandos IRC padrão
+- **Área de Logs Separada**: Separação clara entre mensagens de sistema e chat
+- **Recuperação Automática**: Monitor de pings e reconexão automática a peers conhecidos
 
-## Como começar
+## Instalação
 
 ```bash
+# Clone o repositório
+git clone https://github.com/peder1981/p2p-irc.git
 cd p2p-irc
-go mod tidy
-go run cmd/p2p-irc/main.go --config configs/config.toml
+
+# Compile o cliente
+go build -o p2p-irc ./cmd/p2p-irc/main.go
 ```
 
-## Descoberta Automática de Peers
+## Execução
 
-O p2p-irc oferece dois modos de descoberta automática de peers:
+```bash
+# Execução básica
+./p2p-irc
 
-- **LAN (Rede Local):** utiliza mDNS/DNS-SD para descoberta automática na mesma rede local.
-  - Descoberta automática de peers na mesma rede
-  - Rate limiting para reconexões (máximo 3 tentativas em burst, depois 1 a cada 5 segundos)
-  - Logs detalhados para depuração
-  - Métricas internas para monitoramento
-  - Limpeza automática de peers inativos
-  - Suporte a UPnP para mapeamento de portas
+# Com modo de depuração
+./p2p-irc --debug
 
-- **Internet:** utiliza WebRTC para conexões através de NAT.
-  No arquivo de configuração, defina:
+# Especificando porta e peers iniciais
+./p2p-irc --port 8081 --peers 192.168.1.10:8080,192.168.1.11:8080
+```
 
-  ```toml
-  [network]
-  bootstrapPeers = ["example.com:9001", "1.2.3.4:9001"]
+## Opções de Linha de Comando
 
-  # Servidores ICE (STUN/TURN) para NAT traversal
-  [[network.iceServers]]
-  urls = ["stun:stun.l.google.com:19302"]
-  ```
+- `--debug`: Ativa o modo de depuração, exibindo mensagens adicionais na área de logs
+- `--port`: Define a porta para o serviço de descoberta (padrão: 8080)
+- `--peers`: Lista de peers iniciais separados por vírgula (ex: 192.168.1.10:8080,192.168.1.11:8080)
 
-## Monitoramento e Métricas
+## Comandos Disponíveis
 
-O p2p-irc inclui um sistema interno de métricas para monitorar o estado da rede P2P:
-
-### Métricas do Serviço de Descoberta
-- **Peers Ativos**: número atual de peers conectados
-- **Total de Peers**: total de peers descobertos desde o início
-- **Tentativas de Busca**: número de tentativas de descoberta de peers
-- **Erros de Busca**: número de falhas na descoberta
-- **Reconexões**: número de tentativas de reconexão
-- **Peers Ignorados**: número de peers filtrados (própria instância)
-- **Tempo de Atividade**: tempo desde o início do serviço
-- **Última Descoberta**: timestamp da última descoberta bem-sucedida
-
-### Rate Limiting
-O serviço implementa rate limiting para reconexões:
-- Máximo de 3 tentativas em burst
-- Depois limita a 1 reconexão a cada 5 segundos
-- Logs detalhados para depuração de problemas de conectividade
-
-### Logging
-Logs detalhados são gerados para eventos importantes:
-- Início e encerramento do serviço
-- Descoberta de novos peers
-- Falhas de conexão e reconexões
-- Limpeza de cache de peers
-- Mapeamento de portas UPnP
-
-## Comandos Suportados
-
-Os seguintes comandos estão implementados e funcionando:
-
-- `/nick <novo>`: Define seu nickname no chat
-- `/join <#canal>`: Entra em um canal (adiciona # automaticamente se não fornecido)
-- `/part <#canal>`: Sai de um canal (adiciona # automaticamente se não fornecido)
-- `/msg <canal> <mensagem>`: Envia mensagem para um canal específico
-- `/peers`: Lista todos os peers conectados atualmente
-- `/dcc send <arquivo1,arquivo2,...> <usuário>`: Envia arquivos via DCC
-- `/dcc list`: Lista todas as transferências DCC ativas
-- `/help`: Mostra a lista de comandos disponíveis
+- `/nick <nome>`: Define seu nickname
+- `/join <#canal>`: Entra em um canal
+- `/part [#canal]`: Sai do canal atual ou especificado
+- `/msg <usuário|#canal> <mensagem>`: Envia mensagem privada
+- `/who`: Lista usuários na rede
+- `/peers`: Lista todos os peers conectados
 - `/quit` ou `/exit`: Encerra a aplicação
 
-Observações:
-- Todos os canais começam com #
-- Se o canal não for especificado em /msg, a mensagem será enviada para o canal atual
-- O comando /peers mostra informações detalhadas sobre cada peer conectado
-- Os comandos não são sensíveis a maiúsculas/minúsculas
+## Atalhos de Teclado
 
-## DCC (Direct Client-to-Client)
+- **F1**: Exibe ajuda detalhada
+- **Alt+1-9**: Alternar entre canais
+- **Ctrl+L**: Limpar logs
+- **Ctrl+P**: Alternar foco entre painéis
+- **Ctrl+N**: Criar novo canal
+- **Esc**: Voltar para o campo de entrada
 
-O P2P IRC suporta transferência direta de arquivos entre usuários através do protocolo DCC.
+## Arquitetura
 
-Funcionalidades:
-- Transferência direta de arquivos entre usuários
-- Suporte a múltiplos arquivos simultâneos
-- Gerenciamento de fila de transferências
-- Estatísticas em tempo real (velocidade, ETA)
-- Logging detalhado para depuração
+O P2P-IRC é construído com uma arquitetura modular:
 
-Comandos disponíveis:
-- `/dcc send <arquivo1,arquivo2,...> <usuário>`: Envia arquivos para outro usuário
-- `/dcc list`: Lista todas as transferências ativas
+- **Interface do Usuário**: Baseada em tview para uma experiência TUI moderna
+- **Descoberta de Peers**: Utiliza mDNS e DHT para descoberta de peers na rede
+- **Transporte P2P**: Baseado em WebRTC para comunicação direta entre peers
+- **Histórico Persistente**: Armazenamento local de mensagens para continuidade
 
-## Interface TUI Alternativa
+## Estrutura do Projeto
 
-Existe uma interface TUI experimental em `cmd/p2p-irc-tui`.
-Para executá-la:
-
-```bash
-go run cmd/p2p-irc-tui/main.go
+```
+p2p-irc/
+├── cmd/
+│   └── p2p-irc/           # Aplicação principal
+├── configs/               # Arquivos de configuração
+├── docs/                  # Documentação
+├── history/               # Histórico de mensagens
+├── internal/
+│   ├── config/            # Gerenciamento de configurações
+│   ├── discovery/         # Descoberta de peers
+│   ├── dht/               # Implementação de DHT
+│   └── ui/                # Interface do usuário
+│       └── unified_ui.go  # Interface unificada
+└── tests/                 # Testes automatizados
 ```
 
-## Configuração
+## Contribuindo
 
-O arquivo de configuração (`configs/config.toml`) suporta:
+Contribuições são bem-vindas! Veja [CONTRIBUTING.md](./docs/CONTRIBUTING.md) para mais detalhes.
 
-```toml
-[network]
-# Peers para bootstrap
-bootstrapPeers = ["example.com:9001"]
+## Documentação
 
-# Servidores ICE para NAT traversal
-[[network.iceServers]]
-urls = ["stun:stun.l.google.com:19302"]
+Para mais informações, consulte:
 
-[dcc]
-# Configurações DCC
-downloadDir = "./downloads"
-maxConcurrent = 5
-logEnabled = false
-```
+- [Guia do Usuário](./docs/GUIA_USUARIO.md)
+- [Documentação Técnica](./docs/DOCUMENTACAO_TECNICA.md)
+
+## Licença
+
+Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
