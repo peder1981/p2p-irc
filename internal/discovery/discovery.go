@@ -49,6 +49,7 @@ type Discovery struct {
     instanceID    string
     dht           *dht.RoutingTable
     zeroconf      *zeroconf.Server
+    resolver      *zeroconf.Resolver
     mu            sync.RWMutex
     ctx           context.Context
     cancel        context.CancelFunc
@@ -67,14 +68,27 @@ func New(bootstrapPeers []string, port int) (*Discovery, error) {
     // Gera um ID único para esta instância
     instanceID := generateInstanceID()
 
+    // Tenta encontrar uma porta disponível
+    if port == 0 {
+        port = findAvailablePort(49152, 65535) // Portas dinâmicas/privadas
+    }
+
     // Gera o ID do nó local
     nodeID := dht.GenerateNodeID(fmt.Sprintf("%s:%d", instanceID, port))
+
+    // Cria o resolver uma única vez
+    resolver, err := zeroconf.NewResolver(nil)
+    if err != nil {
+        cancel()
+        return nil, fmt.Errorf("erro ao criar resolver: %w", err)
+    }
 
     d := &Discovery{
         serviceName: "p2p-irc",
         port:        port,
         instanceID:  instanceID,
         dht:         dht.NewRoutingTable(nodeID, 20),
+        resolver:    resolver,
         ctx:         ctx,
         cancel:      cancel,
         metrics: Metrics{
@@ -83,6 +97,19 @@ func New(bootstrapPeers []string, port int) (*Discovery, error) {
     }
 
     return d, nil
+}
+
+// findAvailablePort encontra uma porta disponível no intervalo especificado
+func findAvailablePort(start, end int) int {
+    for port := start; port <= end; port++ {
+        addr := fmt.Sprintf(":%d", port)
+        listener, err := net.Listen("tcp", addr)
+        if err == nil {
+            listener.Close()
+            return port
+        }
+    }
+    return start // Retorna a primeira porta se nenhuma estiver disponível
 }
 
 // canReconnect implementa rate limiting simples para reconexões
@@ -108,83 +135,69 @@ func (d *Discovery) canReconnect() bool {
 
 // discoverPeers procura continuamente por novos peers
 func (d *Discovery) discoverPeers() {
-    entries := make(chan *zeroconf.ServiceEntry)
-    defer close(entries)
-
-    // Inicia busca mDNS
-    resolver, err := zeroconf.NewResolver(nil)
-    if err != nil {
-        fmt.Printf("[ERRO] Falha ao criar resolver mDNS: %v\n", err)
-        d.metrics.FailedAttempts++
-        return
-    }
-
-    // Canal para controle da goroutine de browse
     done := make(chan struct{})
-    defer close(done)
 
-    fmt.Printf("[INFO] Iniciando serviço de descoberta de peers (instanceID: %s)\n", d.instanceID)
+    fmt.Printf("[INFO] Iniciando serviço de descoberta de peers (instanceID: %s, porta: %d)\n", d.instanceID, d.port)
 
+    // Goroutine para procurar peers
     go func() {
+        defer close(done)
+        
+        // Primeira busca imediata
+        d.performBrowse()
+        
+        // Depois usa ticker para buscas periódicas
+        ticker := time.NewTicker(time.Second * 30)
+        defer ticker.Stop()
+        
         for {
             select {
             case <-d.ctx.Done():
                 fmt.Printf("[INFO] Encerrando goroutine de browse (instanceID: %s)\n", d.instanceID)
                 return
-            case <-done:
-                fmt.Printf("[INFO] Recebido sinal de encerramento para browse (instanceID: %s)\n", d.instanceID)
-                return
-            default:
-                d.mu.Lock()
-                d.metrics.BrowseAttempts++
-                d.mu.Unlock()
-
-                ctx, cancel := context.WithTimeout(d.ctx, time.Second*5)
-                err := resolver.Browse(ctx, serviceType, domain, entries)
-                cancel()
-
-                if err != nil {
-                    d.mu.Lock()
-                    d.metrics.BrowseErrors++
-                    d.metrics.LastBrowseError = time.Now()
-                    d.mu.Unlock()
-
-                    fmt.Printf("[ERRO] Falha na busca mDNS (instanceID: %s): %v\n", d.instanceID, err)
-
-                    // Aplica rate limiting antes de tentar reconectar
-                    if d.canReconnect() {
-                        d.mu.Lock()
-                        d.metrics.ReconnectCount++
-                        d.metrics.LastReconnect = time.Now()
-                        d.mu.Unlock()
-                        fmt.Printf("[DEBUG] Tentando reconexão após rate limiting (instanceID: %s)\n", d.instanceID)
-                    } else {
-                        fmt.Printf("[DEBUG] Reconexão limitada por rate limiting (instanceID: %s)\n", d.instanceID)
-                        time.Sleep(5 * time.Second)
-                        continue
-                    }
-                }
-
-                fmt.Printf("[DEBUG] Browse bem sucedido (instanceID: %s)\n", d.instanceID)
-                time.Sleep(30 * time.Second) // Intervalo entre buscas
+            case <-ticker.C:
+                d.performBrowse()
             }
         }
     }()
 
-    // Processa entradas encontradas
-    knownPeers := make(map[string]bool)
-    for {
-        select {
-        case <-d.ctx.Done():
-            fmt.Printf("[INFO] Encerrando processamento de entradas (instanceID: %s)\n", d.instanceID)
-            return
-        case entry, ok := <-entries:
-            if !ok {
-                fmt.Printf("[INFO] Canal de entradas fechado (instanceID: %s)\n", d.instanceID)
-                return
-            }
+    <-done // Espera pelo sinal de encerramento
+}
 
-            var peerInstanceID string
+// performBrowse realiza uma única busca por peers
+func (d *Discovery) performBrowse() {
+    d.mu.Lock()
+    d.metrics.BrowseAttempts++
+    d.mu.Unlock()
+
+    // Cria um novo resolver para cada busca
+    resolver, err := zeroconf.NewResolver(nil)
+    if err != nil {
+        d.mu.Lock()
+        d.metrics.BrowseErrors++
+        d.metrics.LastBrowseError = time.Now()
+        d.mu.Unlock()
+        fmt.Printf("[ERRO] Falha ao criar resolver: %v (instanceID: %s)\n", err, d.instanceID)
+        return
+    }
+
+    // Cria um novo contexto para esta busca
+    browseCtx, browseCancel := context.WithTimeout(d.ctx, time.Second*5)
+    defer browseCancel()
+    
+    // Canal para receber entradas
+    entries := make(chan *zeroconf.ServiceEntry)
+    
+    // Canal para sinalizar término
+    browseDone := make(chan struct{})
+    
+    // Goroutine para processar entradas
+    go func() {
+        defer close(browseDone)
+        
+        for entry := range entries {
+            // Ignora própria instância
+            peerInstanceID := ""
             for _, txt := range entry.Text {
                 if len(txt) > 9 && txt[:9] == "instance=" {
                     peerInstanceID = txt[9:]
@@ -192,7 +205,6 @@ func (d *Discovery) discoverPeers() {
                 }
             }
 
-            // Ignora a própria instância
             if peerInstanceID == d.instanceID {
                 d.mu.Lock()
                 d.metrics.PeersIgnored++
@@ -200,34 +212,66 @@ func (d *Discovery) discoverPeers() {
                 continue
             }
 
-            // Atualiza métricas para peers únicos
-            if !knownPeers[peerInstanceID] {
-                d.mu.Lock()
-                d.metrics.TotalPeersFound++
-                d.metrics.LastDiscovery = time.Now()
-                knownPeers[peerInstanceID] = true
-                d.mu.Unlock()
-                fmt.Printf("[INFO] Novo peer descoberto (instanceID: %s, peerID: %s, addr: %s)\n",
-                    d.instanceID, peerInstanceID, entry.AddrIPv4[0].String())
-            } else {
-                fmt.Printf("[DEBUG] Peer já conhecido atualizado (instanceID: %s, peerID: %s, addr: %s)\n",
-                    d.instanceID, peerInstanceID, entry.AddrIPv4[0].String())
-            }
+            // Atualiza métricas
+            d.mu.Lock()
+            d.metrics.TotalPeersFound++
+            d.metrics.LastDiscovery = time.Now()
+            d.mu.Unlock()
 
-            // Adiciona o peer ao DHT
-            nodeID := dht.GenerateNodeID(fmt.Sprintf("%s:%d", peerInstanceID, entry.Port))
-            node := dht.Node{
-                ID: nodeID,
-                Addr: &net.UDPAddr{
-                    IP:   entry.AddrIPv4[0],
-                    Port: entry.Port,
-                },
-                LastSeen:   time.Now(),
-                InstanceID: peerInstanceID,
+            // Processa todos os IPs do peer
+            for _, ip := range entry.AddrIPv4 {
+                if !ip.IsLoopback() {
+                    // Gera o ID do nó
+                    nodeID := dht.GenerateNodeID(fmt.Sprintf("%s:%d", peerInstanceID, entry.Port))
+                    
+                    // Verifica se o peer já existe no DHT
+                    isNewNode := !d.nodeExists(nodeID)
+                    
+                    // Adiciona ou atualiza o peer
+                    node := dht.Node{
+                        ID:         nodeID,
+                        Addr:       &net.UDPAddr{IP: ip, Port: entry.Port},
+                        LastSeen:   time.Now(),
+                        InstanceID: peerInstanceID,
+                    }
+                    
+                    d.dht.AddNode(node)
+                    
+                    // Log apenas para novos peers e apenas uma vez
+                    if isNewNode {
+                        fmt.Printf("[INFO] Novo peer encontrado: %s:%d (instanceID: %s)\n", 
+                            ip.String(), entry.Port, peerInstanceID)
+                    }
+                }
             }
-            d.dht.AddNode(node)
         }
+    }()
+    
+    // Inicia o browse
+    err = resolver.Browse(browseCtx, serviceType, domain, entries)
+    if err != nil {
+        d.mu.Lock()
+        d.metrics.BrowseErrors++
+        d.metrics.LastBrowseError = time.Now()
+        d.mu.Unlock()
+        fmt.Printf("[ERRO] Falha ao procurar serviços: %v (instanceID: %s)\n", err, d.instanceID)
+        close(entries)
+        <-browseDone
+        return
     }
+    
+    // Aguarda o timeout sem logs
+    select {
+    case <-browseCtx.Done():
+    case <-browseDone:
+    }
+    
+    // Não fechamos o canal entries aqui, deixamos isso para o resolver
+}
+
+// nodeExists verifica se um nó existe no DHT
+func (d *Discovery) nodeExists(nodeID dht.NodeID) bool {
+    return d.dht.NodeExists(nodeID)
 }
 
 // Stop para todos os serviços de descoberta
@@ -266,21 +310,26 @@ func (d *Discovery) Start() error {
 func (d *Discovery) startMDNS() error {
     var err error
     for i := 0; i < maxRetries; i++ {
+        // Gera um ID único para esta instância
         txt := []string{
             fmt.Sprintf("port=%d", d.port),
             fmt.Sprintf("instance=%s", d.instanceID),
         }
 
+        // Registra o serviço em todas as interfaces
+        interfaces := getNetInterfaces()
         d.zeroconf, err = zeroconf.Register(
             "p2p-irc-"+d.instanceID,
             serviceType,
             domain,
             d.port,
             txt,
-            nil,
+            interfaces,
         )
 
         if err == nil {
+            fmt.Printf("[INFO] Serviço registrado em %d interfaces (instanceID: %s, porta: %d)\n", 
+                len(interfaces), d.instanceID, d.port)
             return nil
         }
 
@@ -294,6 +343,71 @@ func (d *Discovery) startMDNS() error {
     }
 
     return fmt.Errorf("falha após %d tentativas: %w", maxRetries, err)
+}
+
+// getNetInterfaces retorna todas as interfaces de rede não loopback
+func getNetInterfaces() []net.Interface {
+    var interfaces []net.Interface
+    ifaces, err := net.Interfaces()
+    if err != nil {
+        return []net.Interface{}
+    }
+
+    for _, iface := range ifaces {
+        // Ignora interfaces down ou loopback
+        if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+            continue
+        }
+
+        interfaces = append(interfaces, iface)
+    }
+
+    return interfaces
+}
+
+// getAllLocalIPs retorna todos os IPs locais não loopback
+func getAllLocalIPs() []net.IP {
+    var ips []net.IP
+    ifaces, err := net.Interfaces()
+    if err != nil {
+        return []net.IP{net.ParseIP("127.0.0.1")}
+    }
+
+    for _, iface := range ifaces {
+        // Ignora interfaces down ou loopback
+        if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+            continue
+        }
+
+        addrs, err := iface.Addrs()
+        if err != nil {
+            continue
+        }
+
+        for _, addr := range addrs {
+            switch v := addr.(type) {
+            case *net.IPNet:
+                if !v.IP.IsLoopback() {
+                    if ip4 := v.IP.To4(); ip4 != nil {
+                        ips = append(ips, ip4)
+                    }
+                }
+            case *net.IPAddr:
+                if !v.IP.IsLoopback() {
+                    if ip4 := v.IP.To4(); ip4 != nil {
+                        ips = append(ips, ip4)
+                    }
+                }
+            }
+        }
+    }
+
+    // Se nenhum IP foi encontrado, usa localhost
+    if len(ips) == 0 {
+        ips = append(ips, net.ParseIP("127.0.0.1"))
+    }
+
+    return ips
 }
 
 // cleanCache remove peers expirados periodicamente
@@ -355,13 +469,17 @@ func (d *Discovery) setupUPnP() error {
     return fmt.Errorf("falha ao mapear porta em todos os clientes")
 }
 
-// GetPeers retorna a lista atual de peers conhecidos
+// GetPeers retorna todos os peers conhecidos pelo serviço de descoberta
 func (d *Discovery) GetPeers() []dht.Node {
     d.mu.RLock()
     defer d.mu.RUnlock()
-    // Usa o ID da instância local como alvo
-    target := dht.GenerateNodeID(fmt.Sprintf("%s:%d", d.instanceID, d.port))
-    return d.dht.FindClosestNodes(target, 20)
+    
+    var peers []dht.Node
+    for _, bucket := range d.dht.GetBuckets() {
+        peers = append(peers, bucket.GetNodes()...)
+    }
+    
+    return peers
 }
 
 // generateInstanceID gera um ID único para esta instância
@@ -387,4 +505,14 @@ func getLocalIP() string {
         }
     }
     return "127.0.0.1"
+}
+
+// GetInstanceID retorna o ID da instância
+func (d *Discovery) GetInstanceID() string {
+    return d.instanceID
+}
+
+// GetPort retorna a porta em uso
+func (d *Discovery) GetPort() int {
+    return d.port
 }

@@ -63,6 +63,7 @@ func NewChatUI() *ChatUI {
 // AddMessage adiciona uma nova mensagem ao chat.
 func (c *ChatUI) AddMessage(msg string) {
     fmt.Fprintf(c.chatView, "%s\n", msg)
+    c.app.Draw()
 }
 
 // SetInputHandler define a função chamada ao enviar mensagem.

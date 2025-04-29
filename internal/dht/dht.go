@@ -185,6 +185,45 @@ func getBit(id NodeID, pos int) byte {
     return (id[pos/8] >> uint(7-pos%8)) & 0x1
 }
 
+// GetBuckets retorna todos os buckets da tabela de roteamento
+func (rt *RoutingTable) GetBuckets() []*Bucket {
+    rt.mu.RLock()
+    defer rt.mu.RUnlock()
+    
+    result := make([]*Bucket, len(rt.buckets))
+    copy(result, rt.buckets[:])
+    return result
+}
+
+// GetNodes retorna todos os nós do bucket
+func (b *Bucket) GetNodes() []Node {
+    b.mu.RLock()
+    defer b.mu.RUnlock()
+    
+    result := make([]Node, len(b.nodes))
+    copy(result, b.nodes)
+    return result
+}
+
+// NodeExists verifica se um nó existe na tabela de roteamento
+func (rt *RoutingTable) NodeExists(nodeID NodeID) bool {
+    rt.mu.RLock()
+    defer rt.mu.RUnlock()
+    
+    for _, bucket := range rt.buckets {
+        bucket.mu.RLock()
+        for _, node := range bucket.nodes {
+            if node.ID == nodeID {
+                bucket.mu.RUnlock()
+                return true
+            }
+        }
+        bucket.mu.RUnlock()
+    }
+    
+    return false
+}
+
 // DHT representa a tabela hash distribuída
 type DHT struct {
     store map[string]map[string]bool // chave -> conjunto de peers
