@@ -161,11 +161,53 @@ func TestDiscoveryMetrics(t *testing.T) {
     }
 
     // Verifica métricas iniciais
-    if d.GetMetrics().ActivePeers != 0 {
+    metrics := d.GetMetrics()
+    if metrics.ActivePeers != 0 {
         t.Error("número inicial de peers deveria ser 0")
     }
+    if metrics.BrowseAttempts != 0 {
+        t.Error("número inicial de tentativas de browse deveria ser 0")
+    }
+    if metrics.BrowseErrors != 0 {
+        t.Error("número inicial de erros de browse deveria ser 0")
+    }
 
-    // Adiciona alguns peers
+    // Inicia o serviço
+    if err := d.Start(); err != nil {
+        t.Fatalf("erro ao iniciar discovery: %v", err)
+    }
+
+    // Espera algumas tentativas de browse
+    time.Sleep(2 * time.Second)
+
+    metrics = d.GetMetrics()
+    if metrics.BrowseAttempts == 0 {
+        t.Error("deveria ter registrado tentativas de browse")
+    }
+
+    // Para o serviço e verifica se as métricas são mantidas
+    d.Stop()
+    metricsAfterStop := d.GetMetrics()
+    if metricsAfterStop.BrowseAttempts != metrics.BrowseAttempts {
+        t.Error("métricas não deveriam ser resetadas após parar o serviço")
+    }
+}
+
+func TestDiscoveryShutdown(t *testing.T) {
+    d, err := New(nil, 0)
+    if err != nil {
+        t.Fatalf("erro ao criar discovery: %v", err)
+    }
+
+    // Inicia o serviço
+    if err := d.Start(); err != nil {
+        t.Fatalf("erro ao iniciar discovery: %v", err)
+    }
+
+    // Espera o serviço inicializar
+    time.Sleep(time.Second)
+
+    // Adiciona alguns peers antes do shutdown
     for i := 0; i < 3; i++ {
         nodeID := dht.GenerateNodeID(fmt.Sprintf("test%d:1234", i))
         node := dht.Node{
@@ -175,13 +217,89 @@ func TestDiscoveryMetrics(t *testing.T) {
                 Port: 1234 + i,
             },
             LastSeen: time.Now(),
+            InstanceID: fmt.Sprintf("test%d", i),
         }
         d.dht.AddNode(node)
     }
 
-    // Verifica métricas após adições
+    // Verifica peers antes do shutdown
+    peersBeforeStop := d.GetPeers()
+    if len(peersBeforeStop) != 3 {
+        t.Errorf("número incorreto de peers antes do shutdown: got %d, want 3", len(peersBeforeStop))
+    }
+
+    // Para o serviço
+    d.Stop()
+
+    // Espera um pouco para garantir que todas as goroutines foram finalizadas
+    time.Sleep(time.Second)
+
+    // Tenta adicionar um novo peer após o shutdown
+    nodeID := dht.GenerateNodeID("test4:1234")
+    node := dht.Node{
+        ID: nodeID,
+        Addr: &net.UDPAddr{
+            IP:   net.ParseIP("127.0.0.1"),
+            Port: 1234,
+        },
+        LastSeen: time.Now(),
+        InstanceID: "test4",
+    }
+    d.dht.AddNode(node)
+
+    // Verifica se o serviço ainda mantém os peers após o shutdown
+    peersAfterStop := d.GetPeers()
+    if len(peersAfterStop) != 4 {
+        t.Errorf("número incorreto de peers após shutdown: got %d, want 4", len(peersAfterStop))
+    }
+}
+
+func TestDiscoveryGracefulShutdown(t *testing.T) {
+    d, err := New(nil, 0)
+    if err != nil {
+        t.Fatalf("erro ao criar discovery: %v", err)
+    }
+
+    // Inicia o serviço
+    if err := d.Start(); err != nil {
+        t.Fatalf("erro ao iniciar discovery: %v", err)
+    }
+
+    // Espera o serviço inicializar
+    time.Sleep(time.Second)
+
+    // Simula descoberta de peers em uma goroutine separada
+    done := make(chan struct{})
+    go func() {
+        for i := 0; i < 10; i++ {
+            nodeID := dht.GenerateNodeID(fmt.Sprintf("test%d:1234", i))
+            node := dht.Node{
+                ID: nodeID,
+                Addr: &net.UDPAddr{
+                    IP:   net.ParseIP("127.0.0.1"),
+                    Port: 1234 + i,
+                },
+                LastSeen: time.Now(),
+                InstanceID: fmt.Sprintf("test%d", i),
+            }
+            d.dht.AddNode(node)
+            time.Sleep(100 * time.Millisecond)
+        }
+        close(done)
+    }()
+
+    // Espera algumas descobertas acontecerem
+    time.Sleep(300 * time.Millisecond)
+
+    // Inicia shutdown enquanto descobertas ainda estão acontecendo
+    d.Stop()
+
+    // Espera a goroutine de descoberta terminar
+    <-done
+
+    // Verifica métricas após shutdown
     metrics := d.GetMetrics()
-    if metrics.ActivePeers != 3 {
-        t.Errorf("número incorreto de peers ativos: got %d, want 3", metrics.ActivePeers)
+    if metrics.PeersIgnored > metrics.TotalPeersFound {
+        t.Error("número de peers ignorados não deveria ser maior que o total encontrado")
     }
 }

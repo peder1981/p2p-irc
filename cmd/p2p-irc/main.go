@@ -54,7 +54,7 @@ func main() {
     fmt.Printf("p2p-irc iniciado na porta %d usando config %q\n", port, *cfg)
 
     // Inicializa estado IRC local
-    nick, user := "anon", ""
+    nickname := "anon"
     channels := []string{"#general"}
     activeChannel := "#general"
     peerNick := make(map[string]string)
@@ -183,96 +183,87 @@ func main() {
             cmd := strings.ToUpper(strings.TrimPrefix(parts[0], "/"))
             switch cmd {
             case "NICK":
-                if len(parts) == 2 {
-                    nick = parts[1]
-                    chatUI.AddMessage(fmt.Sprintf("Seu nick agora é %s", nick))
-                    // Broadcast para todos os peers
-                    mu.Lock()
-                    for _, c := range conns {
-                        fmt.Fprintf(c, "NICK %s\n", nick)
-                    }
-                    mu.Unlock()
+                if len(parts) < 2 {
+                    chatUI.AddMessage("Uso: /nick <novo>")
+                    return
                 }
-            case "USER":
-                if len(parts) == 2 {
-                    user = parts[1]
-                    chatUI.AddMessage(fmt.Sprintf("Seu user agora é %s", user))
-                    mu.Lock()
-                    for _, c := range conns {
-                        fmt.Fprintf(c, "USER %s\n", user)
-                    }
-                    mu.Unlock()
-                }
+                nickname = parts[1]
+                chatUI.AddMessage(fmt.Sprintf("Nickname alterado para: %s", nickname))
+
             case "JOIN":
-                if len(parts) == 2 {
-                    ch := parts[1]
-                    if !contains(channels, ch) {
-                        channels = append(channels, ch)
-                        activeChannel = ch
-                        chatUI.AddMessage(fmt.Sprintf("Entrando em %s", ch))
-                        mu.Lock()
-                        for _, c := range conns {
-                            fmt.Fprintf(c, "JOIN %s\n", ch)
-                        }
-                        mu.Unlock()
-                    }
+                if len(parts) < 2 {
+                    chatUI.AddMessage("Uso: /join <#canal>")
+                    return
                 }
+                channel := parts[1]
+                if !strings.HasPrefix(channel, "#") {
+                    channel = "#" + channel
+                }
+                if !contains(channels, channel) {
+                    channels = append(channels, channel)
+                    chatUI.AddMessage(fmt.Sprintf("Entrou no canal: %s", channel))
+                }
+
             case "PART":
-                if len(parts) == 2 {
-                    ch := parts[1]
-                    if contains(channels, ch) {
-                        channels = remove(channels, ch)
-                        if activeChannel == ch && len(channels) > 0 {
-                            activeChannel = channels[0]
-                        }
-                        chatUI.AddMessage(fmt.Sprintf("Saindo de %s", ch))
-                        mu.Lock()
-                        for _, c := range conns {
-                            fmt.Fprintf(c, "PART %s\n", ch)
-                        }
-                        mu.Unlock()
-                    }
+                if len(parts) < 2 {
+                    chatUI.AddMessage("Uso: /part <#canal>")
+                    return
                 }
-            case "TOPIC":
-                if len(parts) >= 3 {
-                    ch := parts[1]
-                    topic := strings.Join(parts[2:], " ")
-                    if contains(channels, ch) {
-                        topics[ch] = topic
-                        chatUI.AddMessage(fmt.Sprintf("Definindo tópico de %s para %s", ch, topic))
-                        mu.Lock()
-                        for _, c := range conns {
-                            fmt.Fprintf(c, "TOPIC %s :%s\n", ch, topic)
-                        }
-                        mu.Unlock()
-                    }
+                channel := parts[1]
+                if !strings.HasPrefix(channel, "#") {
+                    channel = "#" + channel
                 }
-            case "MODE":
-                if len(parts) >= 3 {
-                    ch := parts[1]
-                    mode := parts[2]
-                    if contains(channels, ch) {
-                        channelModes[ch] = mode
-                        chatUI.AddMessage(fmt.Sprintf("Definindo modo de %s para %s", ch, mode))
-                        mu.Lock()
-                        for _, c := range conns {
-                            fmt.Fprintf(c, "MODE %s %s\n", ch, mode)
-                        }
-                        mu.Unlock()
-                    }
+                if contains(channels, channel) {
+                    channels = remove(channels, channel)
+                    chatUI.AddMessage(fmt.Sprintf("Saiu do canal: %s", channel))
                 }
-            case "ME":
-                if len(parts) >= 2 {
-                    action := strings.Join(parts[1:], " ")
-                    chatUI.AddMessage(fmt.Sprintf("* %s %s", nick, action))
-                    mu.Lock()
-                    for _, c := range conns {
-                        fmt.Fprintf(c, "PRIVMSG %s :\x01ACTION %s\x01\n", activeChannel, action)
-                    }
-                    mu.Unlock()
+
+            case "MSG":
+                if len(parts) < 3 {
+                    chatUI.AddMessage("Uso: /msg <canal> <mensagem>")
+                    return
                 }
+                channel := parts[1]
+                if !strings.HasPrefix(channel, "#") {
+                    channel = "#" + channel
+                }
+                if !contains(channels, channel) {
+                    chatUI.AddMessage(fmt.Sprintf("Você não está no canal: %s", channel))
+                    return
+                }
+                message := strings.Join(parts[2:], " ")
+                chatUI.AddMessage(fmt.Sprintf("[%s] %s: %s", channel, nickname, message))
+
+            case "PEERS":
+                peers := discoveryService.GetPeers()
+                if len(peers) == 0 {
+                    chatUI.AddMessage("Nenhum peer conectado")
+                    return
+                }
+                chatUI.AddMessage("Peers conectados:")
+                for _, peer := range peers {
+                    chatUI.AddMessage(fmt.Sprintf("- %s", peer.Addr))
+                }
+
+            case "HELP":
+                chatUI.AddMessage("Comandos disponíveis:")
+                chatUI.AddMessage("/nick <novo>: define seu nickname")
+                chatUI.AddMessage("/join <#canal>: entra em um canal")
+                chatUI.AddMessage("/part <#canal>: sai de um canal")
+                chatUI.AddMessage("/msg <canal> <mensagem>: envia mensagem ao canal")
+                chatUI.AddMessage("/peers: lista peers conectados")
+                chatUI.AddMessage("/dcc send <arquivo> <usuário>: envia arquivo")
+                chatUI.AddMessage("/dcc list: lista transferências")
+                chatUI.AddMessage("/help: mostra esta ajuda")
+                chatUI.AddMessage("/quit: sai da aplicação")
+
+            case "QUIT", "EXIT":
+                chatUI.AddMessage("Encerrando aplicação...")
+                time.Sleep(500 * time.Millisecond)
+                os.Exit(0)
+
             default:
-                chatUI.AddMessage(fmt.Sprintf("Comando desconhecido: %s", cmd))
+                chatUI.AddMessage(fmt.Sprintf("Comando desconhecido: %s. Use /help para ajuda.", cmd))
             }
             return
         }
@@ -288,7 +279,7 @@ func main() {
             fmt.Fprintf(c, "PRIVMSG %s :%s\n", activeChannel, msg)
         }
         mu.Unlock()
-        chatUI.AddMessage(fmt.Sprintf("%s: %s", nick, msg))
+        chatUI.AddMessage(fmt.Sprintf("%s: %s", nickname, msg))
     })
 
     // Loop principal de processamento de mensagens

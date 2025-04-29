@@ -20,16 +20,26 @@ const (
     cacheExpiry = 1 * time.Hour
     maxRetries  = 3
     retryDelay  = 5 * time.Second
+    // Rate limiting
+    maxReconnectRate = 0.2 // 1 reconexão a cada 5 segundos
+    burstLimit       = 3   // permite burst de até 3 reconexões
 )
 
 // Metrics contém métricas do sistema de descoberta
 type Metrics struct {
-    ActivePeers     int
-    TotalDiscovered int64
-    LastDiscovery   time.Time
-    FailedAttempts  int64
-    Uptime         time.Duration
-    StartTime      time.Time
+    ActivePeers        int
+    TotalDiscovered    int64
+    LastDiscovery      time.Time
+    FailedAttempts     int64
+    Uptime            time.Duration
+    StartTime         time.Time
+    BrowseAttempts    int64
+    BrowseErrors      int64
+    LastBrowseError   time.Time
+    ReconnectCount    int64
+    LastReconnect     time.Time
+    TotalPeersFound   int64
+    PeersIgnored      int64
 }
 
 // Discovery é o serviço de descoberta de peers
@@ -45,6 +55,9 @@ type Discovery struct {
     metrics       Metrics
     retryCount    int
     lastRetry     time.Time
+    // Rate limiting para reconexões
+    lastReconnectTime time.Time
+    reconnectCount    int
 }
 
 // New cria um novo serviço de descoberta
@@ -72,6 +85,159 @@ func New(bootstrapPeers []string, port int) (*Discovery, error) {
     return d, nil
 }
 
+// canReconnect implementa rate limiting simples para reconexões
+func (d *Discovery) canReconnect() bool {
+    now := time.Now()
+    
+    // Se é a primeira reconexão ou passou tempo suficiente desde a última
+    if d.reconnectCount == 0 || now.Sub(d.lastReconnectTime) >= time.Second*5 {
+        d.reconnectCount = 1
+        d.lastReconnectTime = now
+        return true
+    }
+
+    // Permite burst de até 3 reconexões rápidas
+    if d.reconnectCount < burstLimit && now.Sub(d.lastReconnectTime) < time.Second*5 {
+        d.reconnectCount++
+        return true
+    }
+
+    // Rate limiting em efeito
+    return false
+}
+
+// discoverPeers procura continuamente por novos peers
+func (d *Discovery) discoverPeers() {
+    entries := make(chan *zeroconf.ServiceEntry)
+    defer close(entries)
+
+    // Inicia busca mDNS
+    resolver, err := zeroconf.NewResolver(nil)
+    if err != nil {
+        fmt.Printf("[ERRO] Falha ao criar resolver mDNS: %v\n", err)
+        d.metrics.FailedAttempts++
+        return
+    }
+
+    // Canal para controle da goroutine de browse
+    done := make(chan struct{})
+    defer close(done)
+
+    fmt.Printf("[INFO] Iniciando serviço de descoberta de peers (instanceID: %s)\n", d.instanceID)
+
+    go func() {
+        for {
+            select {
+            case <-d.ctx.Done():
+                fmt.Printf("[INFO] Encerrando goroutine de browse (instanceID: %s)\n", d.instanceID)
+                return
+            case <-done:
+                fmt.Printf("[INFO] Recebido sinal de encerramento para browse (instanceID: %s)\n", d.instanceID)
+                return
+            default:
+                d.mu.Lock()
+                d.metrics.BrowseAttempts++
+                d.mu.Unlock()
+
+                ctx, cancel := context.WithTimeout(d.ctx, time.Second*5)
+                err := resolver.Browse(ctx, serviceType, domain, entries)
+                cancel()
+
+                if err != nil {
+                    d.mu.Lock()
+                    d.metrics.BrowseErrors++
+                    d.metrics.LastBrowseError = time.Now()
+                    d.mu.Unlock()
+
+                    fmt.Printf("[ERRO] Falha na busca mDNS (instanceID: %s): %v\n", d.instanceID, err)
+
+                    // Aplica rate limiting antes de tentar reconectar
+                    if d.canReconnect() {
+                        d.mu.Lock()
+                        d.metrics.ReconnectCount++
+                        d.metrics.LastReconnect = time.Now()
+                        d.mu.Unlock()
+                        fmt.Printf("[DEBUG] Tentando reconexão após rate limiting (instanceID: %s)\n", d.instanceID)
+                    } else {
+                        fmt.Printf("[DEBUG] Reconexão limitada por rate limiting (instanceID: %s)\n", d.instanceID)
+                        time.Sleep(5 * time.Second)
+                        continue
+                    }
+                }
+
+                fmt.Printf("[DEBUG] Browse bem sucedido (instanceID: %s)\n", d.instanceID)
+                time.Sleep(30 * time.Second) // Intervalo entre buscas
+            }
+        }
+    }()
+
+    // Processa entradas encontradas
+    knownPeers := make(map[string]bool)
+    for {
+        select {
+        case <-d.ctx.Done():
+            fmt.Printf("[INFO] Encerrando processamento de entradas (instanceID: %s)\n", d.instanceID)
+            return
+        case entry, ok := <-entries:
+            if !ok {
+                fmt.Printf("[INFO] Canal de entradas fechado (instanceID: %s)\n", d.instanceID)
+                return
+            }
+
+            var peerInstanceID string
+            for _, txt := range entry.Text {
+                if len(txt) > 9 && txt[:9] == "instance=" {
+                    peerInstanceID = txt[9:]
+                    break
+                }
+            }
+
+            // Ignora a própria instância
+            if peerInstanceID == d.instanceID {
+                d.mu.Lock()
+                d.metrics.PeersIgnored++
+                d.mu.Unlock()
+                continue
+            }
+
+            // Atualiza métricas para peers únicos
+            if !knownPeers[peerInstanceID] {
+                d.mu.Lock()
+                d.metrics.TotalPeersFound++
+                d.metrics.LastDiscovery = time.Now()
+                knownPeers[peerInstanceID] = true
+                d.mu.Unlock()
+                fmt.Printf("[INFO] Novo peer descoberto (instanceID: %s, peerID: %s, addr: %s)\n",
+                    d.instanceID, peerInstanceID, entry.AddrIPv4[0].String())
+            } else {
+                fmt.Printf("[DEBUG] Peer já conhecido atualizado (instanceID: %s, peerID: %s, addr: %s)\n",
+                    d.instanceID, peerInstanceID, entry.AddrIPv4[0].String())
+            }
+
+            // Adiciona o peer ao DHT
+            nodeID := dht.GenerateNodeID(fmt.Sprintf("%s:%d", peerInstanceID, entry.Port))
+            node := dht.Node{
+                ID: nodeID,
+                Addr: &net.UDPAddr{
+                    IP:   entry.AddrIPv4[0],
+                    Port: entry.Port,
+                },
+                LastSeen:   time.Now(),
+                InstanceID: peerInstanceID,
+            }
+            d.dht.AddNode(node)
+        }
+    }
+}
+
+// Stop para todos os serviços de descoberta
+func (d *Discovery) Stop() {
+    d.cancel()
+    if d.zeroconf != nil {
+        d.zeroconf.Shutdown()
+    }
+}
+
 // Start inicia o serviço de descoberta
 func (d *Discovery) Start() error {
     var err error
@@ -94,14 +260,6 @@ func (d *Discovery) Start() error {
     go d.cleanCache()
 
     return nil
-}
-
-// Stop para todos os serviços de descoberta
-func (d *Discovery) Stop() {
-    d.cancel()
-    if d.zeroconf != nil {
-        d.zeroconf.Shutdown()
-    }
 }
 
 // startMDNS inicia o serviço mDNS com retry
@@ -195,61 +353,6 @@ func (d *Discovery) setupUPnP() error {
     }
 
     return fmt.Errorf("falha ao mapear porta em todos os clientes")
-}
-
-// discoverPeers procura continuamente por novos peers
-func (d *Discovery) discoverPeers() {
-    entries := make(chan *zeroconf.ServiceEntry)
-
-    // Inicia busca mDNS
-    resolver, err := zeroconf.NewResolver(nil)
-    if err != nil {
-        fmt.Printf("Erro ao criar resolver mDNS: %v\n", err)
-        return
-    }
-
-    go func() {
-        for {
-            ctx, cancel := context.WithTimeout(d.ctx, time.Second*5)
-            err := resolver.Browse(ctx, serviceType, domain, entries)
-            cancel()
-            if err != nil {
-                fmt.Printf("Erro na busca mDNS: %v\n", err)
-                time.Sleep(5 * time.Second)
-                continue
-            }
-            time.Sleep(30 * time.Second) // Intervalo entre buscas
-        }
-    }()
-
-    // Processa entradas encontradas
-    for entry := range entries {
-        var peerInstanceID string
-        for _, txt := range entry.Text {
-            if len(txt) > 9 && txt[:9] == "instance=" {
-                peerInstanceID = txt[9:]
-                break
-            }
-        }
-
-        // Ignora a própria instância
-        if peerInstanceID == d.instanceID {
-            continue
-        }
-
-        // Adiciona o peer ao DHT
-        nodeID := dht.GenerateNodeID(fmt.Sprintf("%s:%d", peerInstanceID, entry.Port))
-        node := dht.Node{
-            ID: nodeID,
-            Addr: &net.UDPAddr{
-                IP:   entry.AddrIPv4[0],
-                Port: entry.Port,
-            },
-            LastSeen:   time.Now(),
-            InstanceID: peerInstanceID,
-        }
-        d.dht.AddNode(node)
-    }
 }
 
 // GetPeers retorna a lista atual de peers conhecidos
