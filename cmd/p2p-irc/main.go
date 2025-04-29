@@ -9,20 +9,20 @@ import (
     "strings"
     "crypto/rand"
     "encoding/hex"
-   "sync"
-   "github.com/pion/webrtc/v3"
-  "time"
+    "sync"
+    "github.com/pion/webrtc/v3"
+    "time"
 
     "github.com/peder1981/p2p-irc/internal/config"
     "github.com/peder1981/p2p-irc/internal/crypto"
-    "github.com/peder1981/p2p-irc/internal/dht"
+    "github.com/peder1981/p2p-irc/internal/discovery"
     "github.com/peder1981/p2p-irc/internal/transport"
     "github.com/peder1981/p2p-irc/internal/ui"
-    "github.com/peder1981/p2p-irc/internal/scripts"
+    "github.com/peder1981/p2p-irc/internal/portmanager"
+    "github.com/peder1981/p2p-irc/internal/dcc"
 )
 
 func main() {
-    port := flag.Int("port", 0, "porta para conexões entrantes")
     cfg := flag.String("config", "", "caminho para o arquivo de configuração (TOML)")
     flag.Parse()
 
@@ -32,9 +32,7 @@ func main() {
         fmt.Fprintf(os.Stderr, "erro ao carregar config: %v\n", err)
         os.Exit(1)
     }
-    fmt.Printf("p2p-irc iniciado na porta %d usando config %q\n", *port, *cfg)
-    // Exibe configuração carregada (para debug)
-    fmt.Printf("Config: %+v\n", conf)
+
     // Initialize crypto: load or create identity
     privKey, err := crypto.LoadOrCreateIdentity()
     if err != nil {
@@ -43,6 +41,17 @@ func main() {
     }
     pubKey := crypto.PublicKeyFromPrivate(privKey)
     fmt.Printf("Chave pública de identidade: %x\n", pubKey)
+
+    // Inicializa o gerenciador de portas
+    pm := portmanager.New()
+    port, err := pm.GetAvailablePort()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "erro ao obter porta disponível: %v\n", err)
+        os.Exit(1)
+    }
+    defer pm.ReleasePort(port)
+
+    fmt.Printf("p2p-irc iniciado na porta %d usando config %q\n", port, *cfg)
 
     // Inicializa estado IRC local
     nick, user := "anon", ""
@@ -56,11 +65,10 @@ func main() {
     var seenMu sync.Mutex
     seen := make(map[string]bool)
 
-    // Inicializa DHT stub para descoberta de canais
-    dhtMgr := dht.NewDHT()
     // Inicializa tópicos e modos locais
     topics := make(map[string]string)
     channelModes := make(map[string]string)
+
     // Build ICE servers list for P2P transport
     iceServers := make([]webrtc.ICEServer, 0, len(conf.Network.IceServers)+len(conf.Network.StunServers))
     for _, s := range conf.Network.IceServers {
@@ -74,8 +82,22 @@ func main() {
         iceServers = append(iceServers, webrtc.ICEServer{URLs: []string{url}})
     }
 
+    // Inicializa o sistema de descoberta
+    discoveryService, err := discovery.New(conf.Network.BootstrapPeers, port)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "erro ao inicializar descoberta: %v\n", err)
+        os.Exit(1)
+    }
+
+    // Inicia o serviço de descoberta
+    if err := discoveryService.Start(); err != nil {
+        fmt.Fprintf(os.Stderr, "erro ao iniciar descoberta: %v\n", err)
+        os.Exit(1)
+    }
+    defer discoveryService.Stop()
+
     // TCP P2P usando transport (ICE/STUN/TURN)
-    listenAddr := fmt.Sprintf(":%d", *port)
+    listenAddr := fmt.Sprintf(":%d", port)
     listener, err := transport.Listen(listenAddr, iceServers)
     if err != nil {
         fmt.Fprintf(os.Stderr, "erro iniciar listener: %v\n", err)
@@ -93,6 +115,7 @@ func main() {
         defer mu.Unlock()
         conns = append(conns, c)
     }
+
     // addAndListen adds a connection and starts a goroutine to read incoming messages
     addAndListen := func(c net.Conn) {
         addConn(c)
@@ -111,351 +134,167 @@ func main() {
     // Accept incoming
     go func() {
         for c := range listener.AcceptCh {
-            addConn(c)
-            go func(c net.Conn) {
-                r := bufio.NewReader(c)
-                for {
-                    line, err := r.ReadString('\n')
-                    if err != nil {
-                        return
-                    }
-                    recvCh <- peerMessage{Conn: c, Text: strings.TrimSpace(line)}
-                }
-            }(c)
-        }
-    }()
-
-    // Peer discovery on local network via UDP broadcast
-    go func() {
-        // Determine local IP for announcing
-        myIP := getOutboundIP()
-        myAddr := fmt.Sprintf("%s:%d", myIP, *port)
-        // Listen for discovery messages on UDP port same as TCP port
-        udpAddr := net.UDPAddr{IP: net.IPv4zero, Port: *port}
-        uc, err := net.ListenUDP("udp4", &udpAddr)
-        if err != nil {
-            fmt.Fprintf(os.Stderr, "erro iniciar discovery UDP: %v\n", err)
-            return
-        }
-        defer uc.Close()
-        // Broadcast our address periodically
-        ticker := time.NewTicker(3 * time.Second)
-        defer ticker.Stop()
-        baddr := net.UDPAddr{IP: net.IPv4bcast, Port: *port}
-        go func() {
-            for range ticker.C {
-                uc.WriteToUDP([]byte(myAddr), &baddr)
-            }
-        }()
-        buf := make([]byte, 1024)
-        for {
-            n, _, err := uc.ReadFromUDP(buf)
-            if err != nil {
-                continue
-            }
-            peerAddr := string(buf[:n])
-            if peerAddr == myAddr {
-                continue
-            }
-            mu.Lock()
-            already := false
-            for _, c := range conns {
-                if c.RemoteAddr().String() == peerAddr {
-                    already = true
-                    break
-                }
-            }
-            mu.Unlock()
-            if already {
-                continue
-            }
-            c, err := transport.Dial(peerAddr, iceServers)
-            if err != nil {
-                continue
-            }
             addAndListen(c)
         }
     }()
 
-    // Dial bootstrap
-    for _, p := range conf.Network.BootstrapPeers {
-        if c, err := transport.Dial(p, iceServers); err == nil {
-            addConn(c)
-            go func(c net.Conn) {
-                r := bufio.NewReader(c)
-                for {
-                    line, err := r.ReadString('\n')
-                    if err != nil {
-                        return
+    // Rotina de descoberta e conexão com peers
+    go func() {
+        for {
+            peers := discoveryService.GetPeers()
+            for _, peer := range peers {
+                // Verifica se já estamos conectados
+                mu.Lock()
+                connected := false
+                for _, conn := range conns {
+                    if conn.RemoteAddr().String() == peer.Addr.String() {
+                        connected = true
+                        break
                     }
-                    recvCh <- peerMessage{Conn: c, Text: strings.TrimSpace(line)}
                 }
-            }(c)
+                mu.Unlock()
+
+                if !connected {
+                    // Tenta conectar ao peer
+                    conn, err := transport.Dial(peer.Addr.String(), iceServers)
+                    if err != nil {
+                        continue
+                    }
+                    addAndListen(conn)
+                }
+            }
+            time.Sleep(30 * time.Second)
         }
-    }
+    }()
 
-    // Registrar canais iniciais no DHT
-    for _, ch0 := range channels {
-        dhtMgr.Register(ch0, listener.Addr().String())
-    }
-    // Chat TUI
+    // Inicializa UI
     chatUI := ui.NewChatUI()
-    // Initialize scripting/alias engine
-    scriptsPath, err := scripts.DefaultScriptsPath()
-    if err != nil {
-        fmt.Fprintf(os.Stderr, "erro determinar scripts path: %v\n", err)
-    }
-    scriptEngine, err := scripts.NewEngine(scriptsPath)
-    if err != nil {
-        fmt.Fprintf(os.Stderr, "erro carregar scripts: %v\n", err)
-    }
-    // Exibe canais iniciais
-    chatUI.SetChannels(channels)
+    
+    dccManager := dcc.NewManager("downloads")
 
-    chatUI.SetInputHandler(func(text string) {
-        // alias expansion
-        text = scriptEngine.Expand(text)
-        // generate unique ID for this message
-        id := newID()
-        parts := strings.Fields(text)
-        if len(parts) == 0 {
+    chatUI.SetInputHandler(func(msg string) {
+        if strings.HasPrefix(msg, "/dcc ") {
+            handleDCCCommand(msg[5:], dccManager, chatUI)
             return
         }
-        cmd := parts[0]
-        if strings.HasPrefix(cmd, "/") {
+
+        if strings.HasPrefix(msg, "/") {
+            parts := strings.Fields(msg)
+            cmd := strings.ToUpper(strings.TrimPrefix(parts[0], "/"))
             switch cmd {
-            case "/nick":
-                if len(parts) != 2 {
-                    chatUI.AddMessage("Uso: /nick <novo>")
-                    return
-                }
-                nick = parts[1]
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s NICK %s\n", id, nick)
-                }
-                chatUI.AddMessage("Nick definido: " + nick)
-            case "/user":
-                if len(parts) != 2 {
-                    chatUI.AddMessage("Uso: /user <ident>")
-                    return
-                }
-                user = parts[1]
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s USER %s\n", id, user)
-                }
-                chatUI.AddMessage("User definido: " + user)
-            case "/join":
-                if len(parts) != 2 {
-                    chatUI.AddMessage("Uso: /join <#canal>")
-                    return
-                }
-                ch := parts[1]
-                if !contains(channels, ch) {
-                    channels = append(channels, ch)
-                }
-                activeChannel = ch
-                chatUI.SetChannels(channels)
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s JOIN %s\n", id, ch)
-                }
-                chatUI.AddMessage("Entrou em " + ch)
-                // Registrar canal no DHT
-                dhtMgr.Register(ch, listener.Addr().String())
-            case "/part":
-                if len(parts) != 2 {
-                    chatUI.AddMessage("Uso: /part <#canal>")
-                    return
-                }
-                ch := parts[1]
-                channels = remove(channels, ch)
-                if activeChannel == ch {
-                    if len(channels) > 0 {
-                        activeChannel = channels[0]
-                    } else {
-                        activeChannel = ""
-                    }
-                }
-                chatUI.SetChannels(channels)
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s PART %s\n", id, ch)
-                }
-                chatUI.AddMessage("Saiu de " + ch)
-            case "/msg":
-                if len(parts) < 3 {
-                    chatUI.AddMessage("Uso: /msg <canal> <mensagem>")
-                    return
-                }
-                target := parts[1]
-                msg := strings.Join(parts[2:], " ")
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s PRIVMSG %s :%s\n", id, target, msg)
-                }
-                chatUI.AddMessage(fmt.Sprintf("[%s] %s: %s", target, nick, msg))
-            case "/peers":
-                peerAddrs := []string{}
-                for _, c := range conns {
-                    peerAddrs = append(peerAddrs, c.RemoteAddr().String())
-                }
-                chatUI.SetPeers(peerAddrs)
-                chatUI.AddMessage(fmt.Sprintf("Peers: %v", peerAddrs))
-            case "/topic":
-                if len(parts) < 3 {
-                    chatUI.AddMessage("Uso: /topic <#canal> <tópico>")
-                    return
-                }
-                ch := parts[1]
-                topic := strings.Join(parts[2:], " ")
-                topics[ch] = topic
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s TOPIC %s :%s\n", id, ch, topic)
-                }
-                chatUI.AddMessage(fmt.Sprintf("Tópico de %s definido: %s", ch, topic))
-            case "/list":
-                if len(parts) == 1 {
-                    chans := dhtMgr.Channels()
-                    chatUI.AddMessage(fmt.Sprintf("Canais disponíveis: %v", chans))
-                } else if len(parts) == 2 {
-                    ch := parts[1]
-                    peers := dhtMgr.Peers(ch)
-                    chatUI.AddMessage(fmt.Sprintf("Peers em %s: %v", ch, peers))
-                } else {
-                    chatUI.AddMessage("Uso: /list [#canal]")
-                }
-            case "/who":
-                ch := activeChannel
+            case "NICK":
                 if len(parts) == 2 {
-                    ch = parts[1]
-                }
-                users := []string{nick}
-                for addr, chans := range peerChannels {
-                    if chans[ch] {
-                        users = append(users, peerNick[addr])
+                    nick = parts[1]
+                    chatUI.AddMessage(fmt.Sprintf("Seu nick agora é %s", nick))
+                    // Broadcast para todos os peers
+                    mu.Lock()
+                    for _, c := range conns {
+                        fmt.Fprintf(c, "NICK %s\n", nick)
                     }
+                    mu.Unlock()
                 }
-                chatUI.AddMessage(fmt.Sprintf("Usuários em %s: %v", ch, users))
-            case "/mode":
-                if len(parts) < 3 {
-                    chatUI.AddMessage("Uso: /mode <#canal> <modo>")
-                    return
+            case "USER":
+                if len(parts) == 2 {
+                    user = parts[1]
+                    chatUI.AddMessage(fmt.Sprintf("Seu user agora é %s", user))
+                    mu.Lock()
+                    for _, c := range conns {
+                        fmt.Fprintf(c, "USER %s\n", user)
+                    }
+                    mu.Unlock()
                 }
-                ch := parts[1]
-                mode := parts[2]
-                channelModes[ch] = mode
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s MODE %s %s\n", id, ch, mode)
-                }
-                chatUI.AddMessage(fmt.Sprintf("Modo de %s definido: %s", ch, mode))
-            case "/ctcp":
-                if len(parts) < 3 {
-                    chatUI.AddMessage("Uso: /ctcp <nick> <comando>")
-                    return
-                }
-                target := parts[1]
-                cmdctcp := strings.Join(parts[2:], " ")
-                envelope := "\x01" + cmdctcp + "\x01"
-                for _, c := range conns {
-                    fmt.Fprintf(c, "%s PRIVMSG %s :%s\n", id, target, envelope)
-                }
-                chatUI.AddMessage(fmt.Sprintf("CTCP enviado a %s: %s", target, cmdctcp))
-            case "/dcc":
-                chatUI.AddMessage("DCC não implementado")
-            case "/alias":
-                if len(parts) == 1 {
-                    aliases := scriptEngine.ListAliases()
-                    if len(aliases) == 0 {
-                        chatUI.AddMessage("Nenhum alias definido")
-                    } else {
-                        for name, exp := range aliases {
-                            chatUI.AddMessage(fmt.Sprintf("%s -> %s", name, exp))
+            case "JOIN":
+                if len(parts) == 2 {
+                    ch := parts[1]
+                    if !contains(channels, ch) {
+                        channels = append(channels, ch)
+                        activeChannel = ch
+                        chatUI.AddMessage(fmt.Sprintf("Entrando em %s", ch))
+                        mu.Lock()
+                        for _, c := range conns {
+                            fmt.Fprintf(c, "JOIN %s\n", ch)
                         }
+                        mu.Unlock()
                     }
-                } else if parts[1] == "add" && len(parts) >= 4 {
-                    name := parts[2]
-                    expansion := strings.Join(parts[3:], " ")
-                    if err := scriptEngine.AddAlias(name, expansion); err != nil {
-                        chatUI.AddMessage(fmt.Sprintf("Erro ao adicionar alias: %v", err))
-                    } else {
-                        chatUI.AddMessage(fmt.Sprintf("Alias '%s' -> '%s' adicionado", name, expansion))
+                }
+            case "PART":
+                if len(parts) == 2 {
+                    ch := parts[1]
+                    if contains(channels, ch) {
+                        channels = remove(channels, ch)
+                        if activeChannel == ch && len(channels) > 0 {
+                            activeChannel = channels[0]
+                        }
+                        chatUI.AddMessage(fmt.Sprintf("Saindo de %s", ch))
+                        mu.Lock()
+                        for _, c := range conns {
+                            fmt.Fprintf(c, "PART %s\n", ch)
+                        }
+                        mu.Unlock()
                     }
-                } else if parts[1] == "rm" && len(parts) == 3 {
-                    name := parts[2]
-                    if err := scriptEngine.RemoveAlias(name); err != nil {
-                        chatUI.AddMessage(fmt.Sprintf("Erro ao remover alias: %v", err))
-                    } else {
-                        chatUI.AddMessage(fmt.Sprintf("Alias '%s' removido", name))
+                }
+            case "TOPIC":
+                if len(parts) >= 3 {
+                    ch := parts[1]
+                    topic := strings.Join(parts[2:], " ")
+                    if contains(channels, ch) {
+                        topics[ch] = topic
+                        chatUI.AddMessage(fmt.Sprintf("Definindo tópico de %s para %s", ch, topic))
+                        mu.Lock()
+                        for _, c := range conns {
+                            fmt.Fprintf(c, "TOPIC %s :%s\n", ch, topic)
+                        }
+                        mu.Unlock()
                     }
-                } else {
-                    chatUI.AddMessage("Uso: /alias [add <name> <expansion> | rm <name>]")
                 }
-            case "/script":
-                if len(parts) == 2 && parts[1] == "reload" {
-                    if err := scriptEngine.Reload(); err != nil {
-                        chatUI.AddMessage(fmt.Sprintf("Erro ao recarregar scripts: %v", err))
-                    } else {
-                        chatUI.AddMessage("Scripts recarregados")
+            case "MODE":
+                if len(parts) >= 3 {
+                    ch := parts[1]
+                    mode := parts[2]
+                    if contains(channels, ch) {
+                        channelModes[ch] = mode
+                        chatUI.AddMessage(fmt.Sprintf("Definindo modo de %s para %s", ch, mode))
+                        mu.Lock()
+                        for _, c := range conns {
+                            fmt.Fprintf(c, "MODE %s %s\n", ch, mode)
+                        }
+                        mu.Unlock()
                     }
-                } else {
-                    chatUI.AddMessage("Uso: /script reload")
                 }
-            case "/connect":
-                if len(parts) != 2 {
-                    chatUI.AddMessage("Uso: /connect <host:port>")
-                    return
+            case "ME":
+                if len(parts) >= 2 {
+                    action := strings.Join(parts[1:], " ")
+                    chatUI.AddMessage(fmt.Sprintf("* %s %s", nick, action))
+                    mu.Lock()
+                    for _, c := range conns {
+                        fmt.Fprintf(c, "PRIVMSG %s :\x01ACTION %s\x01\n", activeChannel, action)
+                    }
+                    mu.Unlock()
                 }
-                addr := parts[1]
-                c, err := transport.Dial(addr, iceServers)
-                if err != nil {
-                    chatUI.AddMessage(fmt.Sprintf("Erro ao conectar %s: %v", addr, err))
-                    return
-                }
-                addConn(c)
-                chatUI.AddMessage(fmt.Sprintf("Conectado a %s", addr))
-            case "/help":
-                chatUI.AddMessage("Comandos: /nick, /user, /join, /part, /msg, /peers, /topic, /list, /who, /mode, /ctcp, /dcc, /alias, /script, /connect, /help, /quit, /exit")
-            case "/quit", "/exit":
-                chatUI.AddMessage("Saindo...")
-                os.Exit(0)
             default:
-                chatUI.AddMessage("Comando desconhecido: " + cmd)
+                chatUI.AddMessage(fmt.Sprintf("Comando desconhecido: %s", cmd))
             }
             return
         }
-        // Mensagem normal para canal ativo
+
+        // Mensagem normal - envia para o canal ativo
+        msgID := newID()
+        seenMu.Lock()
+        seen[msgID] = true
+        seenMu.Unlock()
+
+        mu.Lock()
         for _, c := range conns {
-            fmt.Fprintf(c, "%s PRIVMSG %s :%s\n", id, activeChannel, text)
+            fmt.Fprintf(c, "PRIVMSG %s :%s\n", activeChannel, msg)
         }
-        chatUI.AddMessage(fmt.Sprintf("[%s] %s: %s", activeChannel, nick, text))
+        mu.Unlock()
+        chatUI.AddMessage(fmt.Sprintf("%s: %s", nick, msg))
     })
 
+    // Loop principal de processamento de mensagens
     go func() {
         for pm := range recvCh {
-            line := pm.Text
-            idx := strings.Index(line, " ")
-            if idx <= 0 {
-                continue
-            }
-            id := line[:idx]
-            body := line[idx+1:]
-
-            // dedupe já vistas mensagens
-            seenMu.Lock()
-            if seen[id] {
-                seenMu.Unlock()
-                continue
-            }
-            seen[id] = true
-            seenMu.Unlock()
-
-            // retransmite para outros peers
-            mu.Lock()
-            for _, c := range conns {
-                if c == pm.Conn {
-                    continue
-                }
-                fmt.Fprintf(c, "%s\n", line)
-            }
-            mu.Unlock()
-
+            body := pm.Text
             parts := strings.Fields(body)
             if len(parts) == 0 {
                 continue
@@ -518,6 +357,11 @@ func main() {
                         chatUI.AddMessage(fmt.Sprintf("%s: %s", sender, msg))
                     }
                 }
+            case "DCC":
+                if len(parts) >= 2 {
+                    dccCmd := strings.Join(parts[1:], " ")
+                    handleDCCCommand(dccCmd, dccManager, chatUI)
+                }
             default:
                 chatUI.AddMessage(body)
             }
@@ -527,6 +371,68 @@ func main() {
     // roda TUI
     if err := chatUI.Run(); err != nil {
         fmt.Fprintf(os.Stderr, "erro UI: %v\n", err)
+    }
+}
+
+func handleDCCCommand(cmd string, dccManager *dcc.Manager, chatUI *ui.ChatUI) {
+    parts := strings.Fields(cmd)
+    if len(parts) < 2 {
+        chatUI.AddMessage("Uso: /dcc <send|list> [args...]")
+        return
+    }
+
+    switch parts[0] {
+    case "send":
+        if len(parts) < 3 {
+            chatUI.AddMessage("Uso: /dcc send <arquivo1,arquivo2,...> <destinatário>")
+            return
+        }
+
+        // Separa lista de arquivos
+        files := strings.Split(parts[1], ",")
+        receiver := parts[2]
+
+        // Envia múltiplos arquivos
+        transfers, err := dccManager.SendFiles(files, receiver)
+        if err != nil {
+            chatUI.AddMessage(fmt.Sprintf("Erro ao enviar arquivos: %v", err))
+            return
+        }
+
+        // Envia comando DCC SEND para cada arquivo
+        for _, t := range transfers {
+            dccCmd := dcc.FormatDCCSend(t.Filename, t.Size, t.Port)
+            chatUI.AddMessage(fmt.Sprintf("Iniciando envio de %s para %s (use: %s)", t.Filename, receiver, dccCmd))
+        }
+    case "list":
+        transfers := dccManager.ListTransfers()
+        if len(transfers) == 0 {
+            chatUI.AddMessage("Nenhuma transferência ativa")
+            return
+        }
+
+        // Mostra lista de transferências
+        chatUI.AddMessage("Transferências ativas:")
+        for _, t := range transfers {
+            status := "pendente"
+            switch t.Status {
+            case dcc.StatusInProgress:
+                status = "em progresso"
+            case dcc.StatusCompleted:
+                status = "completa"
+            case dcc.StatusFailed:
+                status = fmt.Sprintf("falhou: %v", t.Error)
+            case dcc.StatusCanceled:
+                status = "cancelada"
+            }
+
+            msg := fmt.Sprintf("%s -> %s: %s (%d bytes) - %s",
+                t.Sender, t.Receiver, t.Filename, t.Size, status)
+            chatUI.AddMessage(msg)
+        }
+
+    default:
+        chatUI.AddMessage("Comando DCC desconhecido. Use: send, list")
     }
 }
 
@@ -550,6 +456,7 @@ func remove(ss []string, s string) []string {
     }
     return res
 }
+
 // newID gera um identificador único para mensagens.
 func newID() string {
     b := make([]byte, 16)
@@ -557,14 +464,4 @@ func newID() string {
         panic("erro ao gerar ID de mensagem: " + err.Error())
     }
     return hex.EncodeToString(b)
-}
-// getOutboundIP retrieves the preferred outbound IP of this machine
-func getOutboundIP() string {
-    conn, err := net.Dial("udp", "8.8.8.8:80")
-    if err != nil {
-        return "127.0.0.1"
-    }
-    defer conn.Close()
-    localAddr := conn.LocalAddr().(*net.UDPAddr)
-    return localAddr.IP.String()
 }

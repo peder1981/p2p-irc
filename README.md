@@ -80,12 +80,77 @@ bin/p2p-irc-windows-amd64.exe
 - `/who [#canal]`: lista usuários em um canal
 - `/mode <#canal> <modo>`: define modo de um canal
 - `/ctcp <nick> <comando>`: envia um CTCP para outro usuário
-- `/dcc`: (não implementado) transferência de arquivos via DCC
+- `/dcc`: transferência de arquivos via DCC
 - `/alias [add <nome> <expansão> | rm <nome>]`: gerencia alias de comandos
 - `/script reload`: recarrega scripts e alias
 - `/connect <host:porta>`: conecta manualmente a outro peer
 - `/help`: exibe esta lista de comandos
 - `/quit` ou `/exit`: sai da aplicação
+
+## Funcionalidades
+
+- Chat em grupo P2P
+- Descoberta automática de peers via mDNS
+- Suporte a aliases
+- Transferência de arquivos via DCC
+- Suporte a scripts
+- Persistência de mensagens
+- Criptografia (em desenvolvimento)
+
+## Comandos
+
+### Básicos
+- `/nick <novo>`: define o nickname do usuário
+- `/user <ident>`: define a user@host (identificação do usuário)
+- `/join <#canal>`: entra em um canal e notifica peers
+- `/part <#canal>`: sai de um canal e notifica peers
+- `/msg <canal> <mensagem>`: envia mensagem ao canal especificado
+- `/peers`: lista peers conectados
+- `/topic <#canal> <tópico>`: define o tópico de um canal
+- `/list [#canal]`: lista canais disponíveis ou peers em um canal
+- `/who [#canal]`: lista usuários em um canal
+- `/mode <#canal> <modo>`: define modo de um canal
+- `/ctcp <nick> <comando>`: envia um CTCP para outro usuário
+- `/alias [add <nome> <expansão> | rm <nome>]`: gerencia alias de comandos
+- `/script reload`: recarrega scripts e alias
+- `/connect <host:porta>`: conecta manualmente a outro peer
+- `/help`: exibe esta lista de comandos
+- `/quit` ou `/exit`: sai da aplicação
+
+### DCC (Direct Client-to-Client)
+
+O P2P IRC suporta transferência direta de arquivos entre usuários através do protocolo DCC.
+
+Funcionalidades:
+- Transferência direta de arquivos entre usuários
+- Barra de progresso visual
+- Retomada de transferências interrompidas
+- Verificação de integridade via SHA-256
+- Suporte a múltiplos arquivos
+- Cache de peers conhecidos
+
+Comandos disponíveis:
+
+- `/dcc send <arquivo1,arquivo2,...> <usuário>`: Envia um ou mais arquivos para outro usuário
+- `/dcc list`: Lista todas as transferências ativas
+
+Quando um usuário tenta enviar um arquivo, o destinatário receberá uma notificação e poderá aceitar a transferência.
+Se a transferência for interrompida, ela pode ser retomada automaticamente quando reiniciada.
+
+O diretório padrão para downloads é `./downloads` na pasta onde o programa está sendo executado.
+
+### Exemplos
+
+```bash
+# Enviar um arquivo
+/dcc send foto.jpg usuario1
+
+# Enviar múltiplos arquivos
+/dcc send foto1.jpg,foto2.jpg,doc.pdf usuario1
+
+# Listar transferências
+/dcc list
+```
 
 ## Scripts e Alias
 O p2p-irc suporta uma engine de scripts e alias.  
