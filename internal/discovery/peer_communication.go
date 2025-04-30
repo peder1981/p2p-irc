@@ -1,9 +1,31 @@
 package discovery
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"sync"
 	"time"
 )
+
+// Cache para armazenar mensagens já processadas e evitar loops
+var (
+	processedMessages   = make(map[string]bool)
+	processedMessagesMu sync.RWMutex
+)
+
+// IsMessageProcessed verifica se uma mensagem já foi processada
+func IsMessageProcessed(messageID string) bool {
+	processedMessagesMu.RLock()
+	defer processedMessagesMu.RUnlock()
+	return processedMessages[messageID]
+}
+
+// MarkMessageAsProcessed marca uma mensagem como processada
+func MarkMessageAsProcessed(messageID string) {
+	processedMessagesMu.Lock()
+	processedMessages[messageID] = true
+	processedMessagesMu.Unlock()
+}
 
 // SendChatMessageToChannel envia uma mensagem de chat para um canal específico
 // Esta função garante que a mensagem seja enviada para todos os peers no canal
@@ -14,14 +36,27 @@ func (d *Discovery) SendChatMessageToChannel(channel, content, sender string) {
 		return
 	}
 
+	// Gera um ID único para a mensagem
+	messageID := generateMessageID(sender, channel, content)
+
+	// Verifica se a mensagem já foi processada
+	if IsMessageProcessed(messageID) {
+		fmt.Printf("[DEBUG] Mensagem %s já foi processada, ignorando\n", messageID)
+		return
+	}
+
 	// Cria a mensagem
 	msg := Message{
-		Type:      TypeChatMessage,
+		Type:      "chat", // Usando string constante para garantir consistência
 		Sender:    sender,
 		Channel:   channel,
 		Content:   content,
 		Timestamp: time.Now(),
+		MessageID: messageID,
 	}
+
+	// Adiciona a mensagem ao cache de processadas para evitar loops
+	MarkMessageAsProcessed(messageID)
 
 	fmt.Printf("[DEBUG] Enviando mensagem para canal %s: %s (de %s)\n", channel, content, sender)
 
@@ -40,9 +75,15 @@ func (d *Discovery) broadcastToChannel(msg Message, channel string) {
 	// Conta quantos peers receberam a mensagem
 	sentCount := 0
 
+	// Lista de peers no canal para debug
+	var peersInChannel []string
+
 	for addr, peerConn := range d.connections {
 		// Verifica se o peer está no canal da mensagem
-		if !peerConn.IsInChannel(channel) {
+		isInChannel := peerConn.IsInChannel(channel)
+		if isInChannel {
+			peersInChannel = append(peersInChannel, addr)
+		} else {
 			fmt.Printf("[DEBUG] Peer %s não está no canal %s, ignorando\n", addr, channel)
 			continue
 		}
@@ -56,7 +97,7 @@ func (d *Discovery) broadcastToChannel(msg Message, channel string) {
 		}
 	}
 
-	fmt.Printf("[INFO] Mensagem enviada para %d peers no canal %s\n", sentCount, channel)
+	fmt.Printf("[INFO] Mensagem enviada para %d peers no canal %s: %v\n", sentCount, channel, peersInChannel)
 }
 
 // SyncChannels sincroniza os canais com todos os peers conectados
@@ -74,14 +115,14 @@ func (d *Discovery) SyncChannels() {
 	// Envia mensagens JOIN para todos os canais
 	for _, channel := range channels {
 		joinMsg := Message{
-			Type:      TypeJoinChannel,
+			Type:      "join", // Usando string constante para garantir consistência
 			Sender:    d.instanceID,
 			Channel:   channel,
 			Timestamp: time.Now(),
 		}
 
 		// Envia para todos os peers
-		d.BroadcastMessage(joinMsg)
+		d.broadcastToChannel(joinMsg, channel)
 	}
 }
 
@@ -98,4 +139,12 @@ func (d *Discovery) GetPeersInChannel(channel string) []string {
 	}
 
 	return peers
+}
+
+// generateMessageID gera um ID único para uma mensagem
+func generateMessageID(sender, channel, content string) string {
+	timestamp := time.Now().Format(time.RFC3339Nano)
+	data := fmt.Sprintf("%s:%s:%s:%s", sender, channel, content, timestamp)
+	hash := sha256.Sum256([]byte(data))
+	return fmt.Sprintf("%x", hash)
 }

@@ -50,6 +50,21 @@ Opções disponíveis:
 - `--debug`: Ativa o modo de depuração, exibindo mensagens adicionais
 - `--port`: Define a porta para o serviço de descoberta (padrão: porta aleatória)
 - `--peers`: Lista de peers iniciais separados por vírgula (ex: 192.168.1.10:8080,192.168.1.11:8080)
+- `--config`: Caminho para o arquivo de configuração (padrão: configs/config.toml)
+
+### Executando múltiplas instâncias
+
+Para testar a comunicação entre peers na mesma máquina, você pode executar múltiplas instâncias do P2P-IRC:
+
+```bash
+# Primeira instância (B1)
+./p2p-irc --debug --port 8081
+
+# Segunda instância (B2) - conectando ao B1
+./p2p-irc --debug --port 8082 --peers localhost:8081
+```
+
+É importante especificar portas diferentes para cada instância para evitar conflitos.
 
 ## Interface Gráfica
 
@@ -101,6 +116,22 @@ Para enviar uma mensagem privada para outro usuário, use o comando `/msg nome_d
 
 O P2P-IRC descobre automaticamente outros peers na rede local. Você também pode conectar-se a peers específicos usando a opção `--peers` na linha de comando.
 
+### Sincronização de Canais
+
+O sistema implementa um mecanismo robusto de sincronização de canais entre peers:
+
+1. Quando você entra em um canal, todos os peers conectados são notificados
+2. Quando um novo peer se conecta, ele recebe a lista de canais em que você está
+3. As mensagens são propagadas apenas para peers que estão no mesmo canal
+
+### Sistema de Prevenção de Loops
+
+Para evitar loops de mensagens na rede P2P, o sistema implementa:
+
+1. **Identificação Única de Mensagens**: Cada mensagem recebe um ID único baseado no remetente, canal e conteúdo
+2. **Cache de Mensagens Processadas**: Mensagens já processadas são armazenadas temporariamente para evitar reprocessamento
+3. **Verificação Antes do Processamento**: Antes de processar uma mensagem, o sistema verifica se ela já foi processada
+
 ## Solução de Problemas
 
 ### Problemas de Conexão
@@ -110,6 +141,24 @@ Se você estiver enfrentando problemas para se conectar a outros peers:
 1. Verifique sua conexão de internet
 2. Verifique se as portas necessárias estão abertas no seu firewall
 3. Tente reiniciar o cliente com a opção `--debug` para obter mais informações
+4. Certifique-se de que os peers estão na mesma rede ou acessíveis via internet
+
+### Problemas de Comunicação entre Peers
+
+Se as mensagens não estiverem sendo recebidas por outros peers:
+
+1. Verifique se ambos os peers estão no mesmo canal usando `/join #canal`
+2. Use o comando `/peers` para confirmar que os peers estão conectados
+3. Ative o modo de depuração (`--debug`) para ver mensagens detalhadas sobre o processamento de mensagens
+4. Reinicie as aplicações para forçar uma nova sincronização de canais
+
+### Mensagens Duplicadas ou Loops
+
+Se você estiver recebendo mensagens duplicadas:
+
+1. Verifique se há múltiplas conexões entre os mesmos peers
+2. Reinicie as aplicações para limpar o cache de mensagens processadas
+3. Ative o modo de depuração para verificar o fluxo de mensagens
 
 ### Problemas com a Interface Gráfica
 

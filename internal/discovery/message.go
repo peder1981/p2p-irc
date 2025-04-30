@@ -25,43 +25,50 @@ type Message struct {
 	Channel   string    `json:"channel"`   // Canal da mensagem
 	Content   string    `json:"content"`   // Conteúdo da mensagem
 	Timestamp time.Time `json:"timestamp"` // Timestamp da mensagem
+	MessageID string    `json:"message_id"` // Identificador único da mensagem para evitar loops
 }
 
 // PeerConnection representa uma conexão com um peer
 type PeerConnection struct {
 	Conn       net.Conn      // Conexão TCP
 	LastPing   time.Time     // Último ping recebido
+	InstanceID string        // ID único da instância do peer
 	Channels   map[string]bool // Canais em que o peer está
 	channelsMu sync.RWMutex  // Mutex para proteger o mapa de canais
 }
 
 // NewPeerConnection cria uma nova conexão de peer
-func NewPeerConnection(conn net.Conn) *PeerConnection {
+func NewPeerConnection(conn net.Conn, instanceID string) *PeerConnection {
 	return &PeerConnection{
-		Conn:     conn,
-		LastPing: time.Now(),
-		Channels: make(map[string]bool),
+		Conn:       conn,
+		InstanceID: instanceID,
+		LastPing:   time.Now(),
+		Channels:   make(map[string]bool),
 	}
 }
 
-// SendMessage envia uma mensagem para o peer
-func (p *PeerConnection) SendMessage(msg Message) error {
+// SendMessage envia uma mensagem para um peer
+func (pc *PeerConnection) SendMessage(msg Message) error {
 	// Serializa a mensagem
 	data, err := json.Marshal(msg)
 	if err != nil {
-		return fmt.Errorf("erro ao serializar mensagem: %w", err)
+		return fmt.Errorf("erro ao serializar mensagem: %v", err)
 	}
 	
 	// Adiciona um delimitador
 	data = append(data, '\n')
 	
-	// Define um timeout para o envio
-	p.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	
 	// Envia a mensagem
-	_, err = p.Conn.Write(data)
+	_, err = pc.Conn.Write(data)
 	if err != nil {
-		return fmt.Errorf("erro ao enviar mensagem: %w", err)
+		return fmt.Errorf("erro ao enviar mensagem: %v", err)
+	}
+	
+	// Força o flush da conexão para garantir que a mensagem seja enviada imediatamente
+	if tcpConn, ok := pc.Conn.(*net.TCPConn); ok {
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			return fmt.Errorf("erro ao configurar NoDelay: %v", err)
+		}
 	}
 	
 	return nil
@@ -88,4 +95,22 @@ func (p *PeerConnection) IsInChannel(channel string) bool {
 	p.channelsMu.RLock()
 	defer p.channelsMu.RUnlock()
 	return p.Channels[channel]
+}
+
+// GetChannels retorna a lista de canais do peer
+func (p *PeerConnection) GetChannels() []string {
+	p.channelsMu.RLock()
+	defer p.channelsMu.RUnlock()
+	
+	channels := make([]string, 0, len(p.Channels))
+	for channel := range p.Channels {
+		channels = append(channels, channel)
+	}
+	
+	return channels
+}
+
+// UpdateLastPing atualiza o timestamp do último ping
+func (p *PeerConnection) UpdateLastPing() {
+	p.LastPing = time.Now()
 }

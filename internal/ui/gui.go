@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
+	
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
@@ -45,6 +45,17 @@ func NewGUI() *GUI {
 	// Cria a aplicação Fyne
 	a := app.New()
 	
+	// Define o ícone da aplicação usando um caminho relativo
+	iconPath := "/home/peder/p2p-irc/internal/ui/static/icon.svg"
+	
+	// Carrega o ícone de forma segura
+	resource, err := fyne.LoadResourceFromPath(iconPath)
+	if err == nil {
+		a.SetIcon(resource)
+	} else {
+		fmt.Printf("[ERRO] Falha ao carregar ícone: %v\n", err)
+	}
+	
 	// Cria a janela principal
 	w := a.NewWindow("P2P-IRC")
 	w.Resize(fyne.NewSize(800, 600))
@@ -53,9 +64,8 @@ func NewGUI() *GUI {
 	gui := &GUI{
 		app:          a,
 		mainWindow:   w,
-		channels:     []string{"#general"},
+		channels:     []string{},
 		peers:        []string{},
-		activeChannel: "#general",
 		debugMode:    false,
 		chatContent:  make(map[string][]string),
 	}
@@ -66,8 +76,9 @@ func NewGUI() *GUI {
 	// Configura o layout
 	gui.setupLayout()
 	
-	// Adiciona o canal padrão
+	// Adiciona o canal padrão após a inicialização completa da interface
 	gui.AddChannel("#general")
+	gui.activeChannel = "#general"
 	
 	return gui
 }
@@ -118,9 +129,23 @@ func (g *GUI) initComponents() {
 		// Limpa o campo de entrada
 		g.inputField.SetText("")
 		
+		// Adiciona log para depuração
+		if g.debugMode {
+			g.AddLogMessage(fmt.Sprintf("Processando entrada: %s", text))
+		}
+		
+		// Captura o handler em uma variável local para evitar condições de corrida
+		var handler func(string)
+		g.mu.RLock()
+		handler = g.inputHandler
+		g.mu.RUnlock()
+		
 		// Se há um handler definido, chama-o
-		if g.inputHandler != nil {
-			g.inputHandler(text)
+		if handler != nil {
+			// Executa o handler em uma goroutine para evitar bloqueios na UI
+			go func(input string) {
+				handler(input)
+			}(text)
 		}
 	}
 	
@@ -232,7 +257,9 @@ func (g *GUI) showHelp() {
 
 // SetInputHandler define a função chamada ao enviar mensagem
 func (g *GUI) SetInputHandler(handler func(string)) {
+	g.mu.Lock()
 	g.inputHandler = handler
+	g.mu.Unlock()
 }
 
 // AddMessage adiciona uma mensagem ao chat
@@ -258,6 +285,7 @@ func (g *GUI) AddMessage(msg string) {
 	// Atualiza a visualização de forma segura
 	text := strings.Join(content, "\n")
 	g.chatOutput.SetText(text)
+	g.mainWindow.Canvas().Refresh(g.chatOutput)
 }
 
 // AddMessageToChannel adiciona uma mensagem a um canal específico
@@ -288,6 +316,7 @@ func (g *GUI) AddMessageToChannel(channel, msg string) {
 	if isActiveChannel {
 		text := strings.Join(content, "\n")
 		g.chatOutput.SetText(text)
+		g.mainWindow.Canvas().Refresh(g.chatOutput)
 	}
 }
 
@@ -335,6 +364,7 @@ func (g *GUI) SetActiveChannel(channel string) {
 	g.updateChannelList()
 	text := strings.Join(content, "\n")
 	g.chatOutput.SetText(text)
+	g.mainWindow.Canvas().Refresh(g.chatOutput)
 	g.statusLabel.SetText(fmt.Sprintf("Canal ativo: %s", channel))
 }
 
@@ -431,7 +461,8 @@ func (g *GUI) SetPeers(peers []string) {
 	g.peers = peers
 	g.mu.Unlock()
 	
-	g.updatePeerList()
+	// Atualiza a interface de forma segura
+	g.mainWindow.Canvas().Refresh(g.peerList)
 }
 
 // ClearLogs limpa os logs (método vazio para compatibilidade)
@@ -447,14 +478,38 @@ func (g *GUI) Run() error {
 	return nil
 }
 
+// updateChatOutput atualiza a exibição do chat
+func (g *GUI) updateChatOutput() {
+	// Prepara o conteúdo para atualização
+	g.mu.RLock()
+	content := make([]string, len(g.chatContent[g.activeChannel]))
+	copy(content, g.chatContent[g.activeChannel])
+	g.mu.RUnlock()
+	
+	// Atualiza a exibição do chat usando a thread principal
+	text := strings.Join(content, "\n")
+	g.chatOutput.SetText(text)
+	g.mainWindow.Canvas().Refresh(g.chatOutput)
+}
+
 // updateChannelList atualiza a lista de canais na interface
 func (g *GUI) updateChannelList() {
+	// Verifica se a lista de canais foi inicializada
+	if g.channelList == nil {
+		return
+	}
+	
 	// Atualiza a lista de canais de forma segura
-	fyne.CurrentApp().Driver().CanvasForObject(g.channelList).Refresh(g.channelList)
+	g.mainWindow.Canvas().Refresh(g.channelList)
 }
 
 // updatePeerList atualiza a lista de peers na interface
 func (g *GUI) updatePeerList() {
+	// Verifica se a lista de peers foi inicializada
+	if g.peerList == nil {
+		return
+	}
+	
 	// Atualiza a lista de peers de forma segura
-	fyne.CurrentApp().Driver().CanvasForObject(g.peerList).Refresh(g.peerList)
+	g.mainWindow.Canvas().Refresh(g.peerList)
 }
