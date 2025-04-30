@@ -1,3 +1,7 @@
+// Package ui implementa as interfaces de usuário para o P2P-IRC
+// Copyright (c) 2025 Peder Munksgaard
+// Licenciado sob MIT License
+
 package ui
 
 // Interface define a interface comum para todas as implementações de UI

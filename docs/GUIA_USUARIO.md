@@ -175,10 +175,18 @@ Se a interface gráfica não iniciar corretamente:
 
 ## Desenvolvimento
 
-O P2P-IRC é um projeto de código aberto e contribuições são bem-vindas. Para contribuir:
+O P2P-IRC é um projeto de código aberto desenvolvido por Peder Munksgaard. Contribuições são bem-vindas. Para contribuir:
 
 1. Faça um fork do repositório
 2. Crie uma branch para sua feature (`git checkout -b minha-nova-feature`)
 3. Faça commit das suas mudanças (`git commit -am 'Adiciona nova feature'`)
 4. Faça push para a branch (`git push origin minha-nova-feature`)
 5. Crie um novo Pull Request
+
+## Autor
+
+Peder Munksgaard (peder@munksgaard.me)
+
+## Licença
+
+Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](../LICENSE) para detalhes.

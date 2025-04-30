@@ -1,3 +1,7 @@
+// P2P-IRC - Cliente IRC peer-to-peer com interface gráfica
+// Copyright (c) 2025 Peder Munksgaard
+// Licenciado sob MIT License
+
 package main
 
 import (

@@ -146,6 +146,10 @@ O P2P-IRC implementa um sistema robusto de comunicação entre peers:
 
 Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou enviar pull requests.
 
+## Autor
+
+Peder Munksgaard (peder@munksgaard.me)
+
 ## Licença
 
 Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.

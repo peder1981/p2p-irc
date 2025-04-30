@@ -1,3 +1,7 @@
+// Package discovery implementa o serviço de descoberta de peers
+// Copyright (c) 2025 Peder Munksgaard
+// Licenciado sob MIT License
+
 package discovery
 
 import (
