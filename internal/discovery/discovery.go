@@ -4,14 +4,17 @@ import (
     "context"
     "crypto/rand"
     "encoding/hex"
+    "encoding/json"
     "fmt"
     "net"
+    "strings"
     "sync"
     "time"
 
     "github.com/grandcat/zeroconf"
     "github.com/huin/goupnp/dcps/internetgateway2"
     "github.com/peder1981/p2p-irc/internal/dht"
+    "bufio"
 )
 
 const (
@@ -59,6 +62,14 @@ type Discovery struct {
     // Rate limiting para reconexões
     lastReconnectTime time.Time
     reconnectCount    int
+    // Gerenciamento de conexões
+    connections    map[string]*PeerConnection
+    connMu         sync.RWMutex
+    // Canais
+    channels       map[string]bool
+    channelMu      sync.RWMutex
+    // Callbacks
+    messageHandler func(msg Message)
 }
 
 // New cria um novo serviço de descoberta
@@ -94,6 +105,8 @@ func New(bootstrapPeers []string, port int) (*Discovery, error) {
         metrics: Metrics{
             StartTime: time.Now(),
         },
+        connections: make(map[string]*PeerConnection),
+        channels:    make(map[string]bool),
     }
 
     return d, nil
@@ -137,7 +150,8 @@ func (d *Discovery) canReconnect() bool {
 func (d *Discovery) discoverPeers() {
     done := make(chan struct{})
 
-    fmt.Printf("[INFO] Iniciando serviço de descoberta de peers (instanceID: %s, porta: %d)\n", d.instanceID, d.port)
+    fmt.Printf("[INFO] Iniciando serviço de descoberta de peers (instanceID: %s, porta: %d)\n", 
+        d.instanceID, d.port)
 
     // Goroutine para procurar peers
     go func() {
@@ -146,16 +160,28 @@ func (d *Discovery) discoverPeers() {
         // Primeira busca imediata
         d.performBrowse()
         
-        // Depois usa ticker para buscas periódicas
-        ticker := time.NewTicker(time.Second * 30)
+        // Ticker para buscas periódicas
+        // Inicialmente com intervalo curto para descobrir peers rapidamente
+        ticker := time.NewTicker(5 * time.Second)
         defer ticker.Stop()
+        
+        // Contador para ajustar o intervalo
+        count := 0
         
         for {
             select {
             case <-d.ctx.Done():
-                fmt.Printf("[INFO] Encerrando goroutine de browse (instanceID: %s)\n", d.instanceID)
                 return
             case <-ticker.C:
+                count++
+                
+                // Após 5 buscas, aumenta o intervalo para reduzir o tráfego
+                if count == 5 {
+                    ticker.Stop()
+                    ticker = time.NewTicker(30 * time.Second)
+                }
+                
+                // Realiza a busca
                 d.performBrowse()
             }
         }
@@ -181,8 +207,8 @@ func (d *Discovery) performBrowse() {
         return
     }
 
-    // Cria um novo contexto para esta busca
-    browseCtx, browseCancel := context.WithTimeout(d.ctx, time.Second*5)
+    // Cria um novo contexto para esta busca com timeout reduzido para 2 segundos
+    browseCtx, browseCancel := context.WithTimeout(d.ctx, time.Second*2)
     defer browseCancel()
     
     // Canal para receber entradas
@@ -533,4 +559,393 @@ func (d *Discovery) GetInstanceID() string {
 // GetPort retorna a porta em uso
 func (d *Discovery) GetPort() int {
     return d.port
+}
+
+// SetMessageHandler define a função de callback para processar mensagens recebidas
+func (d *Discovery) SetMessageHandler(handler func(msg Message)) {
+    d.messageHandler = handler
+}
+
+// JoinChannel adiciona um canal à lista de canais
+func (d *Discovery) JoinChannel(channel string) {
+    d.channelMu.Lock()
+    defer d.channelMu.Unlock()
+    
+    d.channels[channel] = true
+    
+    // Notifica todos os peers que entramos no canal
+    d.BroadcastJoinChannel(channel)
+}
+
+// PartChannel remove um canal da lista de canais
+func (d *Discovery) PartChannel(channel string) {
+    d.channelMu.Lock()
+    defer d.channelMu.Unlock()
+    
+    delete(d.channels, channel)
+    
+    // Notifica todos os peers que saímos do canal
+    d.BroadcastPartChannel(channel)
+}
+
+// IsInChannel verifica se estamos em um canal
+func (d *Discovery) IsInChannel(channel string) bool {
+    d.channelMu.RLock()
+    defer d.channelMu.RUnlock()
+    
+    return d.channels[channel]
+}
+
+// GetChannels retorna todos os canais em que estamos
+func (d *Discovery) GetChannels() []string {
+    d.channelMu.RLock()
+    defer d.channelMu.RUnlock()
+    
+    channels := make([]string, 0, len(d.channels))
+    for channel := range d.channels {
+        channels = append(channels, channel)
+    }
+    return channels
+}
+
+// ConnectToPeer estabelece uma conexão com um peer
+func (d *Discovery) ConnectToPeer(addr string) error {
+    // Verifica se já estamos conectados a este peer
+    d.connMu.RLock()
+    if _, exists := d.connections[addr]; exists {
+        d.connMu.RUnlock()
+        return nil // Já conectado
+    }
+    d.connMu.RUnlock()
+    
+    fmt.Printf("[INFO] Tentando conectar ao peer %s\n", addr)
+    
+    // Estabelece a conexão
+    conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+    if err != nil {
+        return fmt.Errorf("erro ao conectar ao peer %s: %w", addr, err)
+    }
+    
+    // Cria a conexão de peer
+    peerConn := NewPeerConnection(conn)
+    
+    // Adiciona à lista de conexões
+    d.connMu.Lock()
+    d.connections[addr] = peerConn
+    d.connMu.Unlock()
+    
+    // Inicia a leitura de mensagens em uma goroutine
+    go d.readMessages(addr, peerConn)
+    
+    // Inicia o ping periódico
+    go d.pingPeer(addr, peerConn)
+    
+    fmt.Printf("[INFO] Conectado ao peer %s\n", addr)
+    
+    // Envia informações sobre os canais em que estamos
+    d.channelMu.RLock()
+    for channel := range d.channels {
+        joinMsg := Message{
+            Type:      TypeJoinChannel,
+            Sender:    d.instanceID,
+            Channel:   channel,
+            Timestamp: time.Now(),
+        }
+        peerConn.SendMessage(joinMsg)
+        fmt.Printf("[INFO] Enviando informação de canal %s para peer %s\n", channel, addr)
+    }
+    d.channelMu.RUnlock()
+    
+    return nil
+}
+
+// readMessages lê mensagens de um peer
+func (d *Discovery) readMessages(addr string, peerConn *PeerConnection) {
+    defer func() {
+        // Remove a conexão quando a goroutine terminar
+        d.connMu.Lock()
+        delete(d.connections, addr)
+        d.connMu.Unlock()
+        
+        peerConn.Conn.Close()
+        fmt.Printf("[INFO] Desconectado do peer %s\n", addr)
+    }()
+    
+    // Buffer para ler as mensagens
+    reader := bufio.NewReader(peerConn.Conn)
+    
+    for {
+        // Verifica se o contexto foi cancelado
+        select {
+        case <-d.ctx.Done():
+            return
+        default:
+            // Continua
+        }
+        
+        // Define um timeout para a leitura
+        peerConn.Conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+        
+        // Lê uma linha (mensagem delimitada por \n)
+        line, err := reader.ReadString('\n')
+        if err != nil {
+            if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+                // Timeout, verifica se o peer ainda está conectado
+                if time.Since(peerConn.LastPing) > 60*time.Second {
+                    fmt.Printf("[INFO] Timeout ao ler do peer %s\n", addr)
+                    return
+                }
+                continue
+            }
+            
+            fmt.Printf("[INFO] Erro ao ler do peer %s: %v\n", addr, err)
+            return
+        }
+        
+        // Remove o delimitador
+        line = strings.TrimSpace(line)
+        if len(line) == 0 {
+            continue
+        }
+        
+        // Deserializa a mensagem
+        var msg Message
+        if err := json.Unmarshal([]byte(line), &msg); err != nil {
+            fmt.Printf("[ERRO] Erro ao deserializar mensagem do peer %s: %v\n", addr, err)
+            continue
+        }
+        
+        fmt.Printf("[INFO] Mensagem recebida do peer %s: tipo=%s, canal=%s, conteúdo=%s\n", 
+            addr, msg.Type, msg.Channel, msg.Content)
+        
+        // Processa a mensagem
+        d.processMessage(addr, peerConn, msg)
+    }
+}
+
+// processMessage processa uma mensagem recebida
+func (d *Discovery) processMessage(addr string, peerConn *PeerConnection, msg Message) {
+    switch msg.Type {
+    case TypePing:
+        // Responde com um pong
+        pongMsg := Message{
+            Type:      TypePong,
+            Sender:    d.instanceID,
+            Timestamp: time.Now(),
+        }
+        peerConn.SendMessage(pongMsg)
+        fmt.Printf("[INFO] Ping recebido do peer %s, enviando pong\n", addr)
+        
+    case TypePong:
+        // Atualiza o timestamp do último ping
+        peerConn.LastPing = time.Now()
+        fmt.Printf("[INFO] Pong recebido do peer %s\n", addr)
+        
+    case TypeJoinChannel:
+        // Peer entrou em um canal
+        peerConn.AddChannel(msg.Channel)
+        fmt.Printf("[INFO] Peer %s entrou no canal %s\n", addr, msg.Channel)
+        
+    case TypePartChannel:
+        // Peer saiu de um canal
+        peerConn.RemoveChannel(msg.Channel)
+        fmt.Printf("[INFO] Peer %s saiu do canal %s\n", addr, msg.Channel)
+        
+    case TypeChatMessage:
+        // Verifica se estamos no canal da mensagem
+        if d.IsInChannel(msg.Channel) {
+            fmt.Printf("[INFO] Mensagem de chat recebida do peer %s para canal %s: %s\n", 
+                addr, msg.Channel, msg.Content)
+            
+            // Repassa a mensagem para o handler
+            if d.messageHandler != nil {
+                d.messageHandler(msg)
+            }
+            
+            // Propaga a mensagem para outros peers que estão no mesmo canal
+            // mas não para o peer que enviou a mensagem
+            d.propagateMessage(msg, addr)
+        } else {
+            fmt.Printf("[INFO] Ignorando mensagem para canal %s (não estamos neste canal)\n", msg.Channel)
+        }
+    }
+}
+
+// SendChatMessage envia uma mensagem de chat para um canal
+func (d *Discovery) SendChatMessage(channel, content, sender string) {
+    // Cria a mensagem
+    msg := Message{
+        Type:      TypeChatMessage,
+        Sender:    sender,
+        Channel:   channel,
+        Content:   content,
+        Timestamp: time.Now(),
+    }
+    
+    fmt.Printf("[INFO] Enviando mensagem para canal %s: %s\n", channel, content)
+    
+    // Envia para todos os peers que estão no canal
+    d.BroadcastMessage(msg)
+}
+
+// BroadcastMessage envia uma mensagem para todos os peers que estão em um canal específico
+func (d *Discovery) BroadcastMessage(msg Message) {
+    d.connMu.RLock()
+    defer d.connMu.RUnlock()
+    
+    fmt.Printf("[INFO] Broadcast de mensagem tipo=%s para canal=%s, %d peers conectados\n", 
+        msg.Type, msg.Channel, len(d.connections))
+    
+    for addr, peerConn := range d.connections {
+        // Verifica se o peer está no canal da mensagem
+        if msg.Channel != "" && !peerConn.IsInChannel(msg.Channel) {
+            fmt.Printf("[INFO] Peer %s não está no canal %s, ignorando\n", addr, msg.Channel)
+            continue
+        }
+        
+        // Envia a mensagem
+        if err := peerConn.SendMessage(msg); err != nil {
+            fmt.Printf("[INFO] Erro ao enviar mensagem para peer %s: %v\n", addr, err)
+        } else {
+            fmt.Printf("[INFO] Mensagem enviada com sucesso para peer %s\n", addr)
+        }
+    }
+}
+
+// ConnectToAllPeers tenta conectar a todos os peers conhecidos
+func (d *Discovery) ConnectToAllPeers() {
+    peers := d.GetPeers()
+    
+    for _, peer := range peers {
+        addr := peer.Addr.String()
+        
+        // Verifica se já estamos conectados
+        d.connMu.RLock()
+        _, exists := d.connections[addr]
+        d.connMu.RUnlock()
+        
+        if !exists && d.canReconnect() {
+            // Tenta conectar em uma goroutine para não bloquear
+            go func(addr string) {
+                if err := d.ConnectToPeer(addr); err != nil {
+                    fmt.Printf("[INFO] Erro ao conectar ao peer %s: %v\n", addr, err)
+                }
+            }(addr)
+        }
+    }
+}
+
+// HandleNewConnection gerencia uma nova conexão recebida
+func (d *Discovery) HandleNewConnection(addr string, peerConn *PeerConnection) {
+    // Adiciona à lista de conexões
+    d.connMu.Lock()
+    d.connections[addr] = peerConn
+    d.connMu.Unlock()
+    
+    // Inicia a leitura de mensagens
+    go d.readMessages(addr, peerConn)
+    
+    // Inicia o ping periódico
+    go d.pingPeer(addr, peerConn)
+    
+    // Envia informações sobre os canais em que estamos
+    d.channelMu.RLock()
+    for channel := range d.channels {
+        joinMsg := Message{
+            Type:      TypeJoinChannel,
+            Sender:    d.instanceID,
+            Channel:   channel,
+            Timestamp: time.Now(),
+        }
+        peerConn.SendMessage(joinMsg)
+    }
+    d.channelMu.RUnlock()
+    
+    fmt.Printf("[INFO] Nova conexão gerenciada: %s\n", addr)
+}
+
+// pingPeer envia pings periódicos para um peer
+func (d *Discovery) pingPeer(addr string, peerConn *PeerConnection) {
+    ticker := time.NewTicker(20 * time.Second)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-d.ctx.Done():
+            return
+        case <-ticker.C:
+            // Verifica se o peer ainda está na lista de conexões
+            d.connMu.RLock()
+            _, exists := d.connections[addr]
+            d.connMu.RUnlock()
+            
+            if !exists {
+                return
+            }
+            
+            // Envia um ping
+            pingMsg := Message{
+                Type:      TypePing,
+                Sender:    d.instanceID,
+                Timestamp: time.Now(),
+            }
+            
+            if err := peerConn.SendMessage(pingMsg); err != nil {
+                fmt.Printf("[INFO] Erro ao enviar ping para peer %s: %v\n", addr, err)
+                return
+            }
+        }
+    }
+}
+
+// BroadcastJoinChannel notifica todos os peers que entramos em um canal
+func (d *Discovery) BroadcastJoinChannel(channel string) {
+    // Cria a mensagem
+    msg := Message{
+        Type:      TypeJoinChannel,
+        Sender:    d.instanceID,
+        Channel:   channel,
+        Timestamp: time.Now(),
+    }
+    
+    // Envia para todos os peers
+    d.BroadcastMessage(msg)
+}
+
+// BroadcastPartChannel notifica todos os peers que saímos de um canal
+func (d *Discovery) BroadcastPartChannel(channel string) {
+    // Cria a mensagem
+    msg := Message{
+        Type:      TypePartChannel,
+        Sender:    d.instanceID,
+        Channel:   channel,
+        Timestamp: time.Now(),
+    }
+    
+    // Envia para todos os peers
+    d.BroadcastMessage(msg)
+}
+
+// propagateMessage propaga uma mensagem para todos os peers que estão em um canal específico,
+// exceto para o peer que enviou a mensagem
+func (d *Discovery) propagateMessage(msg Message, excludeAddr string) {
+    d.connMu.RLock()
+    defer d.connMu.RUnlock()
+    
+    for addr, peerConn := range d.connections {
+        // Não envia para o peer que enviou a mensagem
+        if addr == excludeAddr {
+            continue
+        }
+        
+        // Verifica se o peer está no canal da mensagem
+        if msg.Channel != "" && !peerConn.IsInChannel(msg.Channel) {
+            continue
+        }
+        
+        // Envia a mensagem
+        if err := peerConn.SendMessage(msg); err != nil {
+            fmt.Printf("[INFO] Erro ao propagar mensagem para peer %s: %v\n", addr, err)
+        }
+    }
 }

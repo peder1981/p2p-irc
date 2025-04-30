@@ -1,25 +1,40 @@
 # P2P-IRC
 
-Cliente IRC peer-to-peer com interface TUI moderna e funcional.
+Cliente IRC peer-to-peer com interface gráfica moderna e funcional.
 
 ## Principais Funcionalidades
 
-- **Interface Unificada**: Uma única interface intuitiva e bem organizada
-- **Layout de Duas Colunas**: Canais e peers à esquerda, chat e logs à direita
-- **Notificações Visuais**: Indicadores para canais com mensagens não lidas
-- **Histórico Persistente**: Armazenamento e carregamento automático do histórico de mensagens
+- **Interface Gráfica Nativa**: Interface gráfica em janela própria usando Fyne
+- **Layout de Duas Colunas**: Canais e peers à esquerda, chat à direita
+- **Comunicação P2P**: Comunicação direta entre peers sem servidor central
+- **Descoberta Automática**: Descoberta automática de peers na rede local
 - **Comandos IRC Completos**: Suporte para todos os comandos IRC padrão
-- **Área de Logs Separada**: Separação clara entre mensagens de sistema e chat
-- **Recuperação Automática**: Monitor de pings e reconexão automática a peers conhecidos
+- **Configuração Automática**: Geração automática de porta para facilitar o uso
+- **Modo de Depuração**: Opção para ativar logs detalhados para diagnóstico
 
 ## Instalação
+
+### Pré-requisitos
+
+Para compilar o P2P-IRC, você precisa ter instalado:
+
+- Go 1.16 ou superior
+- Bibliotecas de desenvolvimento para GTK/X11:
+  ```bash
+  sudo apt-get install libgl1-mesa-dev xorg-dev
+  ```
+
+### Compilação
 
 ```bash
 # Clone o repositório
 git clone https://github.com/peder1981/p2p-irc.git
 cd p2p-irc
 
-# Compile o cliente
+# Compile usando o script de build (recomendado)
+./build.sh
+
+# Ou compile manualmente
 go build -o p2p-irc ./cmd/p2p-irc/main.go
 ```
 
@@ -32,14 +47,14 @@ go build -o p2p-irc ./cmd/p2p-irc/main.go
 # Com modo de depuração
 ./p2p-irc --debug
 
-# Especificando porta e peers iniciais
-./p2p-irc --port 8081 --peers 192.168.1.10:8080,192.168.1.11:8080
+# Especificando peers iniciais
+./p2p-irc --peers 192.168.1.10:8080,192.168.1.11:8080
 ```
 
 ## Opções de Linha de Comando
 
-- `--debug`: Ativa o modo de depuração, exibindo mensagens adicionais na área de logs
-- `--port`: Define a porta para o serviço de descoberta (padrão: 8080)
+- `--debug`: Ativa o modo de depuração, exibindo mensagens adicionais
+- `--port`: Define a porta para o serviço de descoberta (padrão: porta aleatória)
 - `--peers`: Lista de peers iniciais separados por vírgula (ex: 192.168.1.10:8080,192.168.1.11:8080)
 
 ## Comandos Disponíveis
@@ -50,25 +65,27 @@ go build -o p2p-irc ./cmd/p2p-irc/main.go
 - `/msg <usuário|#canal> <mensagem>`: Envia mensagem privada
 - `/who`: Lista usuários na rede
 - `/peers`: Lista todos os peers conectados
-- `/quit` ou `/exit`: Encerra a aplicação
+- `/quit`: Encerra a aplicação
+- `/help`: Exibe ajuda com todos os comandos disponíveis
 
-## Atalhos de Teclado
+## Interface Gráfica
 
-- **F1**: Exibe ajuda detalhada
-- **Alt+1-9**: Alternar entre canais
-- **Ctrl+L**: Limpar logs
-- **Ctrl+P**: Alternar foco entre painéis
-- **Ctrl+N**: Criar novo canal
-- **Esc**: Voltar para o campo de entrada
+A interface gráfica do P2P-IRC é composta por:
+
+- **Lista de Canais**: Exibe todos os canais disponíveis
+- **Lista de Peers**: Mostra os peers conectados
+- **Área de Chat**: Exibe as mensagens do canal ativo
+- **Campo de Entrada**: Para digitar mensagens e comandos
+- **Barra de Status**: Exibe informações sobre o estado atual
+- **Menu**: Acesso a funções como ajuda e saída
 
 ## Arquitetura
 
 O P2P-IRC é construído com uma arquitetura modular:
 
-- **Interface do Usuário**: Baseada em tview para uma experiência TUI moderna
-- **Descoberta de Peers**: Utiliza mDNS e DHT para descoberta de peers na rede
-- **Transporte P2P**: Baseado em WebRTC para comunicação direta entre peers
-- **Histórico Persistente**: Armazenamento local de mensagens para continuidade
+- **Interface do Usuário**: Baseada em Fyne para uma experiência GUI nativa
+- **Descoberta de Peers**: Sistema de descoberta de peers na rede local
+- **Comunicação P2P**: Comunicação direta entre peers sem servidor central
 
 ## Estrutura do Projeto
 
@@ -77,27 +94,19 @@ p2p-irc/
 ├── cmd/
 │   └── p2p-irc/           # Aplicação principal
 ├── configs/               # Arquivos de configuração
-├── docs/                  # Documentação
-├── history/               # Histórico de mensagens
 ├── internal/
 │   ├── config/            # Gerenciamento de configurações
 │   ├── discovery/         # Descoberta de peers
-│   ├── dht/               # Implementação de DHT
 │   └── ui/                # Interface do usuário
-│       └── unified_ui.go  # Interface unificada
-└── tests/                 # Testes automatizados
+│       ├── gui.go         # Interface gráfica (Fyne)
+│       ├── terminal_ui.go # Interface de terminal (fallback)
+│       └── interface.go   # Interface comum
+└── build.sh               # Script de compilação
 ```
 
 ## Contribuindo
 
-Contribuições são bem-vindas! Veja [CONTRIBUTING.md](./docs/CONTRIBUTING.md) para mais detalhes.
-
-## Documentação
-
-Para mais informações, consulte:
-
-- [Guia do Usuário](./docs/GUIA_USUARIO.md)
-- [Documentação Técnica](./docs/DOCUMENTACAO_TECNICA.md)
+Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou enviar pull requests.
 
 ## Licença
 

@@ -6,7 +6,17 @@ O P2P-IRC é um cliente IRC peer-to-peer que permite comunicação em tempo real
 
 ## Instalação
 
-Para instalar o P2P-IRC, siga os passos abaixo:
+### Pré-requisitos
+
+Para compilar o P2P-IRC, você precisa ter instalado:
+
+- Go 1.16 ou superior
+- Bibliotecas de desenvolvimento para GTK/X11:
+  ```bash
+  sudo apt-get install libgl1-mesa-dev xorg-dev
+  ```
+
+### Passos para instalação
 
 1. Clone o repositório:
    ```
@@ -18,9 +28,14 @@ Para instalar o P2P-IRC, siga os passos abaixo:
    cd p2p-irc
    ```
 
-3. Compile o cliente:
+3. Compile o cliente usando o script de build:
    ```
-   go build -o p2p-irc ./cmd/p2p-irc/main_unificado.go
+   ./build.sh
+   ```
+   
+   Ou compile manualmente:
+   ```
+   go build -o p2p-irc ./cmd/p2p-irc/main.go
    ```
 
 ## Execução
@@ -32,28 +47,30 @@ Para iniciar o cliente:
 ```
 
 Opções disponíveis:
-- `--debug`: Ativa o modo de depuração, exibindo mensagens adicionais na área de logs
+- `--debug`: Ativa o modo de depuração, exibindo mensagens adicionais
+- `--port`: Define a porta para o serviço de descoberta (padrão: porta aleatória)
+- `--peers`: Lista de peers iniciais separados por vírgula (ex: 192.168.1.10:8080,192.168.1.11:8080)
 
-## Interface do Usuário
+## Interface Gráfica
 
-A interface do P2P-IRC é dividida em quatro áreas principais:
+A interface gráfica do P2P-IRC é composta por:
 
 1. **Lista de Canais** (esquerda superior): Mostra todos os canais em que você está participando
 2. **Lista de Peers** (esquerda inferior): Mostra todos os peers conectados à rede
-3. **Área de Chat** (direita superior): Exibe as mensagens do canal ou conversa atual
-4. **Área de Logs** (direita inferior): Mostra mensagens do sistema e logs de depuração
-5. **Campo de Entrada** (parte inferior): Para digitar mensagens e comandos
+3. **Área de Chat** (direita): Exibe as mensagens do canal atual
+4. **Campo de Entrada** (parte inferior): Para digitar mensagens e comandos
+5. **Barra de Status** (parte inferior): Exibe informações sobre o estado atual
 
-## Atalhos de Teclado
+## Menu da Aplicação
 
-O P2P-IRC oferece diversos atalhos de teclado para facilitar a navegação:
+O P2P-IRC possui um menu simples com as seguintes opções:
 
-- **F1**: Exibe ajuda detalhada com todos os atalhos e comandos
-- **Alt+1-9**: Alterna entre os canais disponíveis
-- **Ctrl+L**: Limpa a área de logs
-- **Ctrl+P**: Alterna o foco entre os diferentes painéis (canais, peers, chat, logs)
-- **Ctrl+N**: Cria um novo canal
-- **Esc**: Volta para o campo de entrada
+- **Arquivo**
+  - **Sair**: Encerra a aplicação
+
+- **Ajuda**
+  - **Comandos**: Exibe uma lista de todos os comandos disponíveis
+  - **Sobre**: Exibe informações sobre o P2P-IRC
 
 ## Comandos
 
@@ -65,18 +82,24 @@ Os comandos são iniciados com o caractere `/`. Os principais comandos são:
 - `/msg <usuário|#canal> <mensagem>`: Envia mensagem privada para um usuário ou canal
 - `/who`: Lista usuários conectados na rede
 - `/peers`: Lista todos os peers conectados
-- `/quit` ou `/exit`: Encerra a aplicação
+- `/quit`: Encerra a aplicação
+- `/help`: Exibe a lista de comandos disponíveis
 
-## Notificações Visuais
+## Funcionalidades
 
-O P2P-IRC inclui indicadores visuais para mensagens não lidas:
+### Canais
 
-- Canais com mensagens não lidas são destacados em amarelo
-- Um contador ao lado do nome do canal indica o número de mensagens não lidas
+Para entrar em um canal, use o comando `/join #nome_do_canal`. Se o canal não existir, ele será criado automaticamente.
 
-## Histórico de Mensagens
+Para sair de um canal, use o comando `/part` ou `/part #nome_do_canal`.
 
-O histórico de mensagens é salvo automaticamente na pasta `history/` e carregado quando você entra em um canal. Isso garante que você não perca mensagens importantes mesmo após reiniciar o cliente.
+### Mensagens Privadas
+
+Para enviar uma mensagem privada para outro usuário, use o comando `/msg nome_do_usuário mensagem`.
+
+### Descoberta de Peers
+
+O P2P-IRC descobre automaticamente outros peers na rede local. Você também pode conectar-se a peers específicos usando a opção `--peers` na linha de comando.
 
 ## Solução de Problemas
 
@@ -88,9 +111,18 @@ Se você estiver enfrentando problemas para se conectar a outros peers:
 2. Verifique se as portas necessárias estão abertas no seu firewall
 3. Tente reiniciar o cliente com a opção `--debug` para obter mais informações
 
-### Outros Problemas
+### Problemas com a Interface Gráfica
 
-Para outros problemas, consulte a área de logs (parte inferior da interface) para obter informações detalhadas sobre o que está acontecendo.
+Se a interface gráfica não iniciar corretamente:
+
+1. Verifique se as bibliotecas necessárias estão instaladas:
+   ```
+   sudo apt-get install libgl1-mesa-dev xorg-dev
+   ```
+2. Tente recompilar o cliente usando o script de build:
+   ```
+   ./build.sh
+   ```
 
 ## Desenvolvimento
 
