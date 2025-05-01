@@ -4,6 +4,64 @@
 
 Este documento detalha todas as melhorias, correções e inovações implementadas no cliente IRC P2P. As atualizações foram focadas em melhorar a experiência do usuário, adicionar funcionalidades padrão de IRC e aumentar a robustez do sistema.
 
+## Versão 1.1.0 (01/05/2025)
+
+### 1. Comunicação entre Instâncias no Mesmo Host
+
+**Descrição:** Implementação de comunicação efetiva entre múltiplas instâncias executadas no mesmo computador.
+
+**Detalhes Técnicos:**
+- Identificação de peers por instanceID único em vez de apenas IP/porta
+- Correção na detecção de conexões próprias para permitir conexões entre diferentes instâncias no mesmo host
+- Implementação de verificação bidirecional para sincronização de canais entre peers
+- Mecanismo para prevenir loops infinitos de mensagens JOIN/PART entre instâncias
+
+**Arquivos Modificados:**
+- `internal/discovery/discovery.go`: Modificada a lógica de conexão e processamento de mensagens
+- `internal/discovery/peer_sync.go`: Aprimorado o mecanismo de sincronização de canais
+- `internal/discovery/discovery_ping.go`: Melhorada a detecção de peers ativos
+
+**Benefícios:**
+- Possibilidade de testar o cliente com múltiplas instâncias em um único computador
+- Melhor experiência em ambientes de desenvolvimento e testes
+- Comunicação correta entre instâncias no mesmo host
+
+### 2. Correções na Interface Gráfica
+
+**Descrição:** Correção de erros relacionados a threads na interface gráfica.
+
+**Detalhes Técnicos:**
+- Encapsulamento de atualizações de UI em chamadas `fyne.Do()` para garantir execução no thread principal
+- Correção de erros "Error in Fyne call thread" nas atualizações de lista de canais e peers
+
+**Arquivos Modificados:**
+- `internal/ui/gui.go`: Corrigidos métodos de atualização de UI
+
+**Benefícios:**
+- Eliminação de erros de thread na atualização da interface
+- Interface mais estável e responsiva
+- Melhor experiência do usuário
+
+### 3. Sistema de Comunicação P2P Robusto
+
+**Descrição:** Melhorias na robustez da comunicação peer-to-peer.
+
+**Detalhes Técnicos:**
+- Implementação de delimitadores de mensagem para garantir separação correta
+- Processamento de múltiplas mensagens recebidas em um único pacote
+- Proteção contra pânico em goroutines de comunicação
+- Timeouts configuráveis para leitura (60s) e escrita (5s) de mensagens
+- Sistema de ping/pong com timeout de 3s para detectar rapidamente peers inativos
+
+**Arquivos Modificados:**
+- `internal/discovery/discovery.go`: Aprimorada a leitura e escrita de mensagens
+- `internal/discovery/discovery_ping.go`: Reduzido o tempo de timeout para detectar falhas mais rapidamente
+
+**Benefícios:**
+- Comunicação mais estável e confiável entre peers
+- Melhor detecção e recuperação de falhas de conexão
+- Redução de problemas de sincronização entre peers
+
 ## Melhorias Principais
 
 ### 1. Notificações Visuais para Canais Não Ativos

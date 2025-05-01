@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -16,7 +17,7 @@ func (d *Discovery) SyncPeers() {
 		channels = append(channels, channel)
 	}
 	d.channelMu.RUnlock()
-
+	
 	// Obtém todas as conexões ativas
 	d.connMu.RLock()
 	connections := make(map[string]*PeerConnection)
@@ -24,9 +25,31 @@ func (d *Discovery) SyncPeers() {
 		connections[addr] = conn
 	}
 	d.connMu.RUnlock()
-
+	
 	fmt.Printf("[DEBUG] Sincronizando %d canais com %d peers\n", 
 		len(channels), len(connections))
+
+	// Se não temos canais ou conexões, não há o que sincronizar
+	if len(channels) == 0 || len(connections) == 0 {
+		return
+	}
+
+	// Para cada peer, envia seu instanceID
+	identifyMsg := Message{
+		Type:      TypeIdentify,
+		Sender:    d.instanceID,
+		Content:   d.instanceID,
+		Timestamp: time.Now(),
+	}
+
+	// Envia a mensagem IDENTIFY para todos os peers
+	for addr, peerConn := range connections {
+		if err := peerConn.SendMessage(identifyMsg); err != nil {
+			fmt.Printf("[ERRO] Falha ao enviar IDENTIFY para peer %s: %v\n", addr, err)
+		} else {
+			fmt.Printf("[DEBUG] IDENTIFY enviado para peer %s\n", addr)
+		}
+	}
 
 	// Para cada canal, envia uma mensagem JOIN para todos os peers
 	for _, channel := range channels {
@@ -39,15 +62,40 @@ func (d *Discovery) SyncPeers() {
 
 		// Envia para todos os peers
 		for addr, peerConn := range connections {
-			if err := peerConn.SendMessage(joinMsg); err != nil {
-				fmt.Printf("[ERRO] Falha ao enviar JOIN para peer %s (canal %s): %v\n", 
-					addr, channel, err)
+			// Verifica se o peer já conhece este canal (para evitar loops)
+			peerConn.mu.RLock()
+			alreadyInChannel := peerConn.channels[channel]
+			peerConn.mu.RUnlock()
+			
+			if !alreadyInChannel {
+				// Adiciona localmente e envia JOIN apenas se o peer não conhecer o canal
+				peerConn.mu.Lock()
+				peerConn.channels[channel] = true
+				peerConn.mu.Unlock()
+				
+				if err := peerConn.SendMessage(joinMsg); err != nil {
+					fmt.Printf("[ERRO] Falha ao enviar JOIN para peer %s (canal %s): %v\n", 
+						addr, channel, err)
+				} else {
+					fmt.Printf("[DEBUG] JOIN enviado para peer %s (canal %s)\n", 
+						addr, channel)
+				}
 			} else {
-				fmt.Printf("[DEBUG] JOIN enviado para peer %s (canal %s)\n", 
-					addr, channel)
+				fmt.Printf("[DEBUG] Peer %s já está no canal %s, ignorando\n", addr, channel)
 			}
 		}
 	}
+
+	// Força uma verificação de conectividade após a sincronização
+	go func() {
+		time.Sleep(1 * time.Second)
+		var wg sync.WaitGroup
+		for addr := range connections {
+			wg.Add(1)
+			go d.pingPeerWrapper(d.ctx, addr, &wg)
+		}
+		wg.Wait()
+	}()
 }
 
 // EnhancedBroadcastMessage é uma versão melhorada do BroadcastMessage
@@ -96,12 +144,12 @@ func (d *Discovery) DebugConnections() {
 		fmt.Printf("[DEBUG] Peer: %s\n", addr)
 		
 		// Lista os canais em que o peer está
-		peerConn.channelsMu.RLock()
-		channels := make([]string, 0, len(peerConn.Channels))
-		for channel := range peerConn.Channels {
+		peerConn.mu.RLock()
+		channels := make([]string, 0, len(peerConn.channels))
+		for channel := range peerConn.channels {
 			channels = append(channels, channel)
 		}
-		peerConn.channelsMu.RUnlock()
+		peerConn.mu.RUnlock()
 
 		fmt.Printf("[DEBUG]   - Canais (%d): %v\n", len(channels), channels)
 		fmt.Printf("[DEBUG]   - Último ping: %s\n", peerConn.LastPing.Format("2006-01-02 15:04:05"))
@@ -165,4 +213,47 @@ func (d *Discovery) FixChannelSync() {
 	}
 
 	fmt.Printf("[INFO] Correção de sincronização concluída\n")
+}
+
+// handlePeerMessage processa mensagens recebidas de peers
+func (d *Discovery) handlePeerMessage(addr string, peerConn *PeerConnection, msg Message) {
+    switch msg.Type {
+    case TypeJoinChannel:
+        if msg.Channel != "" {
+            peerConn.mu.Lock()
+            peerConn.channels[msg.Channel] = true
+            fmt.Printf("[SYNC] Peer %s entrou no canal %s\n", addr, msg.Channel)
+            peerConn.mu.Unlock()
+        }
+    case TypePartChannel:
+        if msg.Channel != "" {
+            peerConn.mu.Lock()
+            delete(peerConn.channels, msg.Channel)
+            fmt.Printf("[SYNC] Peer %s saiu do canal %s\n", addr, msg.Channel)
+            peerConn.mu.Unlock()
+        }
+    case TypePing:
+        // Responde a pings
+        pongMsg := Message{
+            Type:      TypePong,
+            Sender:    d.instanceID,
+            Timestamp: time.Now(),
+        }
+        if err := peerConn.SendMessage(pongMsg); err != nil {
+            fmt.Printf("[ERRO] Falha ao responder PING de %s: %v\n", addr, err)
+        }
+        peerConn.LastPing = time.Now()
+    case TypePong:
+        // Atualiza o timestamp do último ping
+        peerConn.LastPing = time.Now()
+        fmt.Printf("[DEBUG] Recebido PONG de %s\n", addr)
+    case TypeChatMessage:
+        // Propaga a mensagem para outros peers no mesmo canal
+        d.propagateMessage(msg, addr)
+        
+        // Se temos um handler de mensagens, chama ele
+        if d.messageHandler != nil {
+            d.messageHandler(msg)
+        }
+    }
 }

@@ -131,10 +131,6 @@ func main() {
 		handleInput(input, chatUI, discoveryService)
 	})
 
-	// Adiciona o canal padrão
-	chatUI.SetChannels([]string{"#general"})
-	chatUI.SetActiveChannel("#general")
-
 	// Contexto para gerenciar goroutines
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -221,7 +217,7 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 		case "/join":
 			// Comando para entrar em um canal
 			if len(parts) < 2 {
-				chatUI.AddLogMessage("Uso: /join <canal>")
+				chatUI.AddMessage("Uso: /join <canal>")
 				return
 			}
 			
@@ -266,19 +262,19 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 			discoveryService.PartChannel(channel)
 			
 			// Notifica o usuário
-			chatUI.AddLogMessage(fmt.Sprintf("Saiu do canal %s", channel))
+			chatUI.AddMessage(fmt.Sprintf("Saiu do canal %s", channel))
 			
 		case "/nick":
 			// Comando para alterar o nickname
 			if len(parts) < 2 {
-				chatUI.AddLogMessage("Uso: /nick <nickname>")
+				chatUI.AddMessage("Uso: /nick <nickname>")
 				return
 			}
 			
 			nickname = strings.TrimSpace(parts[1])
 			
 			// Notifica o usuário
-			chatUI.AddLogMessage(fmt.Sprintf("Nickname alterado: %s", nickname))
+			chatUI.AddMessage(fmt.Sprintf("Nickname alterado: %s", nickname))
 			
 			// Notifica os canais
 			channels := chatUI.GetChannelList()
@@ -290,13 +286,13 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 		case "/msg":
 			// Comando para enviar mensagem privada
 			if len(parts) < 2 {
-				chatUI.AddLogMessage("Uso: /msg <destinatário> <mensagem>")
+				chatUI.AddMessage("Uso: /msg <destinatário> <mensagem>")
 				return
 			}
 			
 			msgParts := strings.SplitN(parts[1], " ", 2)
 			if len(msgParts) < 2 {
-				chatUI.AddLogMessage("Uso: /msg <destinatário> <mensagem>")
+				chatUI.AddMessage("Uso: /msg <destinatário> <mensagem>")
 				return
 			}
 			
@@ -307,7 +303,7 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 			// TODO: Implementar mensagens privadas
 			
 			// Notifica o usuário
-			chatUI.AddLogMessage(fmt.Sprintf("Mensagem privada para %s: %s", recipient, message))
+			chatUI.AddMessage(fmt.Sprintf("Mensagem privada para %s: %s", recipient, message))
 			
 		case "/who":
 			// Comando para listar usuários conectados
@@ -315,43 +311,43 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 			
 			// Temporariamente, lista os peers conectados
 			peers := discoveryService.GetPeers()
-			chatUI.AddLogMessage("Peers conectados:")
+			chatUI.AddMessage("Peers conectados:")
 			for _, peer := range peers {
-				chatUI.AddLogMessage(fmt.Sprintf("  - %s", peer.Addr.String()))
+				chatUI.AddMessage(fmt.Sprintf("  - %s", peer.Addr.String()))
 			}
 			
 		case "/peers":
 			// Comando para listar peers conectados
 			peers := discoveryService.GetPeers()
-			chatUI.AddLogMessage("Peers conectados:")
+			chatUI.AddMessage("Peers conectados:")
 			for _, peer := range peers {
-				chatUI.AddLogMessage(fmt.Sprintf("  - %s", peer.Addr.String()))
+				chatUI.AddMessage(fmt.Sprintf("  - %s", peer.Addr.String()))
 			}
 			
 			// Lista peers por canal
 			activeChannel := chatUI.GetActiveChannel()
 			if activeChannel != "" {
 				peersInChannel := discoveryService.GetPeersInChannel(activeChannel)
-				chatUI.AddLogMessage(fmt.Sprintf("Peers no canal %s:", activeChannel))
+				chatUI.AddMessage(fmt.Sprintf("Peers no canal %s:", activeChannel))
 				for _, peer := range peersInChannel {
-					chatUI.AddLogMessage(fmt.Sprintf("  - %s", peer))
+					chatUI.AddMessage(fmt.Sprintf("  - %s", peer))
 				}
 			}
 			
 		case "/help":
 			// Comando para exibir ajuda
-			chatUI.AddLogMessage("Comandos disponíveis:")
-			chatUI.AddLogMessage("  /join <canal> - Entra em um canal")
-			chatUI.AddLogMessage("  /part [<canal>] - Sai de um canal (usa o canal ativo se não especificado)")
-			chatUI.AddLogMessage("  /nick <nickname> - Altera o nickname")
-			chatUI.AddLogMessage("  /msg <destinatário> <mensagem> - Envia mensagem privada")
-			chatUI.AddLogMessage("  /who - Lista usuários conectados")
-			chatUI.AddLogMessage("  /peers - Lista peers conectados")
-			chatUI.AddLogMessage("  /quit - Encerra a aplicação")
-			chatUI.AddLogMessage("  /help - Exibe esta ajuda")
-			chatUI.AddLogMessage("")
-			chatUI.AddLogMessage("Atalhos de teclado:")
-			chatUI.AddLogMessage("  Ctrl+C: Encerra a aplicação")
+			chatUI.AddMessage("Comandos disponíveis:")
+			chatUI.AddMessage("  /join <canal> - Entra em um canal")
+			chatUI.AddMessage("  /part [<canal>] - Sai de um canal (usa o canal ativo se não especificado)")
+			chatUI.AddMessage("  /nick <nickname> - Altera o nickname")
+			chatUI.AddMessage("  /msg <destinatário> <mensagem> - Envia mensagem privada")
+			chatUI.AddMessage("  /who - Lista usuários conectados")
+			chatUI.AddMessage("  /peers - Lista peers conectados")
+			chatUI.AddMessage("  /quit - Encerra a aplicação")
+			chatUI.AddMessage("  /help - Exibe esta ajuda")
+			chatUI.AddMessage("")
+			chatUI.AddMessage("Atalhos de teclado:")
+			chatUI.AddMessage("  Ctrl+C: Encerra a aplicação")
 			
 		case "/quit":
 			// Comando para encerrar a aplicação
@@ -359,7 +355,7 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 			
 		case "/sync":
 			// Comando para forçar a sincronização de canais
-			chatUI.AddLogMessage("Forçando sincronização de canais e peers...")
+			chatUI.AddMessage("Forçando sincronização de canais e peers...")
 			
 			// Força a sincronização de canais
 			discoveryService.SyncPeers()
@@ -370,11 +366,11 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 			// Exibe informações de depuração
 			discoveryService.DebugConnections()
 			
-			chatUI.AddLogMessage("Sincronização concluída!")
+			chatUI.AddMessage("Sincronização concluída!")
 			
 		case "/debug":
 			// Comando para exibir informações de depuração
-			chatUI.AddLogMessage("Informações de depuração:")
+			chatUI.AddMessage("Informações de depuração:")
 			
 			// Exibe informações sobre as conexões
 			discoveryService.DebugConnections()
@@ -383,21 +379,21 @@ func handleInput(input string, chatUI ui.Interface, discoveryService *discovery.
 			activeChannel := chatUI.GetActiveChannel()
 			if activeChannel != "" {
 				peersInChannel := discoveryService.GetPeersInChannel(activeChannel)
-				chatUI.AddLogMessage(fmt.Sprintf("Peers no canal %s:", activeChannel))
+				chatUI.AddMessage(fmt.Sprintf("Peers no canal %s:", activeChannel))
 				for _, peer := range peersInChannel {
-					chatUI.AddLogMessage(fmt.Sprintf("  - %s", peer))
+					chatUI.AddMessage(fmt.Sprintf("  - %s", peer))
 				}
 			}
 			
 		default:
 			// Comando desconhecido
-			chatUI.AddLogMessage(fmt.Sprintf("Comando desconhecido: %s", cmd))
+			chatUI.AddMessage(fmt.Sprintf("Comando desconhecido: %s", cmd))
 		}
 	} else {
 		// Não é um comando, envia como mensagem para o canal ativo
 		activeChannel := chatUI.GetActiveChannel()
 		if activeChannel == "" {
-			chatUI.AddLogMessage("Você precisa entrar em um canal primeiro")
+			chatUI.AddMessage("Você precisa entrar em um canal primeiro")
 			return
 		}
 		

@@ -2,12 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
@@ -40,40 +42,48 @@ type GUI struct {
 	inputHandler  func(string)
 }
 
-// NewGUI cria uma nova interface gráfica
+// NewGUI cria uma nova interface gráfica sem adicionar canais durante a construção
 func NewGUI() *GUI {
+	log.Printf("[DEBUG] Inicializando nova GUI")
 	// Cria a aplicação Fyne
 	a := app.New()
-	
+	// Carrega recurso do ícone
+	var icon fyne.Resource
+	if res, err := fyne.LoadResourceFromPath("assets/irc_p2p_icon.svg"); err != nil {
+		log.Printf("[WARN] não foi possível carregar ícone: %v", err)
+	} else {
+		icon = res
+		a.SetIcon(icon)
+	}
 	// Cria a janela principal
 	w := a.NewWindow("P2P-IRC")
+	// Define ícone na janela
+	if icon != nil {
+		w.SetIcon(icon)
+	}
 	w.Resize(fyne.NewSize(800, 600))
 	
-	// Cria a interface
+	// Cria a estrutura GUI com canal padrão
 	gui := &GUI{
-		app:          a,
-		mainWindow:   w,
-		channels:     []string{"#general"},
-		peers:        []string{},
+		app:           a,
+		mainWindow:    w,
+		channels:      []string{"#general"},
+		peers:         []string{},
 		activeChannel: "#general",
-		debugMode:    false,
-		chatContent:  make(map[string][]string),
+		debugMode:     false,
+		chatContent:   make(map[string][]string),
 	}
 	
-	// Inicializa os componentes
+	// Inicializa componentes e layout
 	gui.initComponents()
-	
-	// Configura o layout
 	gui.setupLayout()
-	
-	// Adiciona o canal padrão
-	gui.AddChannel("#general")
 	
 	return gui
 }
 
 // initComponents inicializa os componentes da interface
 func (g *GUI) initComponents() {
+	log.Printf("[DEBUG] Inicializando componentes da GUI")
 	// Lista de canais
 	g.channelList = widget.NewList(
 		func() int { return len(g.channels) },
@@ -88,6 +98,11 @@ func (g *GUI) initComponents() {
 			}
 		},
 	)
+	if g.channelList == nil {
+		log.Printf("[ERRO] Falha ao inicializar g.channelList")
+	} else {
+		log.Printf("[DEBUG] g.channelList inicializado com sucesso")
+	}
 	g.channelList.OnSelected = func(id widget.ListItemID) {
 		g.SetActiveChannel(g.channels[id])
 		g.channelList.Refresh()
@@ -346,40 +361,22 @@ func (g *GUI) GetActiveChannel() string {
 	return g.activeChannel
 }
 
-// SetChannels atualiza a lista de canais
+// SetChannels atualiza a lista de canais sem forçar refresh prematuro
 func (g *GUI) SetChannels(channels []string) {
 	g.mu.Lock()
 	g.channels = channels
 	g.mu.Unlock()
-	
-	g.updateChannelList()
 }
 
-// AddChannel adiciona um canal à lista
+// AddChannel adiciona um canal à lista e atualiza a UI
 func (g *GUI) AddChannel(channel string) {
+	log.Printf("[DEBUG] Adicionando canal: %s", channel)
 	g.mu.Lock()
-	
-	// Verifica se o canal já existe
-	channelExists := false
-	for _, ch := range g.channels {
-		if ch == channel {
-			channelExists = true
-			break
-		}
-	}
-	
-	// Adiciona o canal se não existir
-	if !channelExists {
+	if !contains(g.channels, channel) {
 		g.channels = append(g.channels, channel)
-		
-		// Cria o conteúdo do canal se não existir
-		if _, exists := g.chatContent[channel]; !exists {
-			g.chatContent[channel] = []string{}
-		}
+		log.Printf("[DEBUG] Canal adicionado: %s, tamanho da lista: %d", channel, len(g.channels))
 	}
 	g.mu.Unlock()
-	
-	// Atualiza a interface
 	g.updateChannelList()
 }
 
@@ -441,20 +438,36 @@ func (g *GUI) ClearLogs() {
 
 // Run inicia a aplicação GUI
 func (g *GUI) Run() error {
-	// Exibe a janela principal
+	log.Printf("[DEBUG] Iniciando GUI")
 	g.mainWindow.ShowAndRun()
-	
 	return nil
 }
 
 // updateChannelList atualiza a lista de canais na interface
 func (g *GUI) updateChannelList() {
-	// Atualiza a lista de canais de forma segura
-	fyne.CurrentApp().Driver().CanvasForObject(g.channelList).Refresh(g.channelList)
+    if g.channelList == nil {
+        return
+    }
+    fyne.Do(func() {
+        canvas.Refresh(g.channelList)
+    })
 }
 
 // updatePeerList atualiza a lista de peers na interface
 func (g *GUI) updatePeerList() {
-	// Atualiza a lista de peers de forma segura
-	fyne.CurrentApp().Driver().CanvasForObject(g.peerList).Refresh(g.peerList)
+    if g.peerList == nil {
+        return
+    }
+    fyne.Do(func() {
+        canvas.Refresh(g.peerList)
+    })
+}
+
+func contains(s []string, e string) bool {
+    for _, a := range s {
+        if a == e {
+            return true
+        }
+    }
+    return false
 }

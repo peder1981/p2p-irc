@@ -8,6 +8,8 @@ Cliente IRC peer-to-peer com interface gráfica moderna e funcional.
 - **Layout de Duas Colunas**: Canais e peers à esquerda, chat à direita
 - **Comunicação P2P**: Comunicação direta entre peers sem servidor central
 - **Descoberta Automática**: Descoberta automática de peers na rede local
+- **Suporte Multi-instância**: Comunicação entre múltiplas instâncias no mesmo host
+- **Sincronização de Canais**: Coordenação robusta de canais entre peers
 - **Comandos IRC Completos**: Suporte para todos os comandos IRC padrão
 - **Configuração Automática**: Geração automática de porta para facilitar o uso
 - **Modo de Depuração**: Opção para ativar logs detalhados para diagnóstico
@@ -86,6 +88,26 @@ O P2P-IRC é construído com uma arquitetura modular:
 - **Interface do Usuário**: Baseada em Fyne para uma experiência GUI nativa
 - **Descoberta de Peers**: Sistema de descoberta de peers na rede local
 - **Comunicação P2P**: Comunicação direta entre peers sem servidor central
+
+## Novidades na Versão 1.1.0
+
+### Melhorias na Comunicação P2P
+
+- **Comunicação entre instâncias no mesmo host**: Agora é possível executar múltiplas instâncias no mesmo computador e elas se comunicarão corretamente.
+- **Melhor detecção de identidade**: O sistema agora identifica corretamente peers usando instanceIDs únicos, permitindo conexões entre diferentes instâncias mesmo com IPs idênticos.
+- **Sincronização robusta de canais**: Implementada verificação bidirecional para garantir que todos os peers em um canal estejam cientes uns dos outros.
+- **Prevenção de loops de mensagens**: Adicionado mecanismo para evitar ciclos infinitos de mensagens de confirmação entre peers.
+
+### Melhorias na Interface
+
+- **Correções na UI**: Atualizações de interface agora são executadas no thread correto do Fyne, eliminando erros de threading.
+- **Feedback visual aprimorado**: Melhor feedback sobre conexões e atividades de peers no sistema.
+
+### Estabilidade
+
+- **Recuperação de falhas**: Implementada proteção contra pânico em goroutines de comunicação.
+- **Timeouts ajustados**: Melhor gerenciamento de timeouts para leitura e escrita de mensagens.
+- **Detecção de peers inativos**: Sistema de ping/pong mais robusto para detectar e desconectar peers inativos.
 
 ## Estrutura do Projeto
 

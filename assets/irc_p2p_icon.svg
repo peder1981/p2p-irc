@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bgGradient" cx="50%" cy="50%" r="75%">
+      <stop offset="0%" stop-color="#0b0033"/>
+      <stop offset="100%" stop-color="#330066"/>
+    </radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <circle cx="128" cy="128" r="128" fill="url(#bgGradient)"/>
+  <g filter="url(#glow)" stroke="#00ffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="80" y1="100" x2="176" y2="100"/>
+    <line x1="80" y1="156" x2="176" y2="156"/>
+    <line x1="104" y1="72" x2="104" y2="180"/>
+    <line x1="152" y1="72" x2="152" y2="180"/>
+  </g>
+  <g filter="url(#glow)" stroke="#00ffff" stroke-width="4">
+    <circle cx="40" cy="128" r="12" fill="#00ffff"/>
+    <circle cx="216" cy="128" r="12" fill="#00ffff"/>
+    <circle cx="128" cy="40" r="12" fill="#00ffff"/>
+    <circle cx="128" cy="216" r="12" fill="#00ffff"/>
+    <line x1="128" y1="52" x2="128" y2="104"/>
+    <line x1="128" y1="152" x2="128" y2="204"/>
+    <line x1="52" y1="128" x2="104" y2="128"/>
+    <line x1="152" y1="128" x2="204" y2="128"/>
+  </g>
+</svg>
