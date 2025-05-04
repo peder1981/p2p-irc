@@ -1,3 +1,7 @@
+//go:build cgo
+// +build cgo
+//
+// GUI representa a interface gráfica do cliente P2P-IRC, compilada apenas quando cgo está habilitado.
 package ui
 
 import (

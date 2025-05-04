@@ -58,6 +58,65 @@ if go build -o p2p-irc ./cmd/p2p-irc/main.go; then
     echo -e "  ${GREEN}./p2p-irc --peers ip1:porta1,ip2:porta2${NC} - Conecta a peers específicos"
     echo -e "\nO cliente está configurado para usar a porta $RANDOM_PORT automaticamente."
     echo -e "Você não precisa especificar a porta manualmente."
+    # Cria diretório bin se não existir e compila todos os comandos em ./cmd
+    mkdir -p bin
+    # Remove old executables to prevent stale files
+    rm -rf bin/*
+    echo -e "${YELLOW}Compilando todos os executáveis em ./cmd...${NC}"
+    for dir in cmd/*; do
+        if [ -d "$dir" ]; then
+            name=$(basename "$dir")
+            if [ "$name" = "p2p-irc-tui" ]; then
+                echo -e "${YELLOW}Ignorando $name...${NC}"
+                continue
+            fi
+            echo -e "${YELLOW}Compilando $name...${NC}"
+            if [ "$name" = "p2p-irc" ]; then
+                # Use the already built p2p-irc executable
+                cp p2p-irc "bin/$name"
+            else
+                if go build -o "bin/$name" "./$dir"; then
+                    echo -e "${GREEN}Executável bin/$name criado com sucesso!${NC}"
+                else
+                    echo -e "${RED}Falha ao compilar $name.${NC}"
+                fi
+            fi
+            chmod +x "bin/$name"
+        fi
+    done
+    echo -e "${GREEN}Todos os executáveis foram construídos em ./bin${NC}"
+    # Inicia a cross-compilação para todas as arquiteturas suportadas
+    echo -e "${YELLOW}Iniciando cross-compilação para todas as arquiteturas...${NC}"
+    HOST_OS=$(go env GOOS)
+    HOST_ARCH=$(go env GOARCH)
+    for target in $(go tool dist list); do
+        GOOS=${target%/*}
+        GOARCH=${target#*/}
+        # Pula a arquitetura do host (já compilada acima)
+        if [ "$GOOS" = "$HOST_OS" ] && [ "$GOARCH" = "$HOST_ARCH" ]; then
+            continue
+        fi
+        ext=""
+        if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+        for dir in cmd/*; do
+            if [ -d "$dir" ]; then
+                name=$(basename "$dir")
+                if [ "$name" = "p2p-irc-tui" ]; then
+                    echo -e "${YELLOW}Ignorando cross-compilação de $name...${NC}"
+                    continue
+                fi
+                out="bin/${name}-${GOOS}-${GOARCH}${ext}"
+                echo -e "${YELLOW}Compilando $out...${NC}"
+                if CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -mod=mod -o "$out" "./$dir"; then
+                    chmod +x "$out"
+                    echo -e "${GREEN}Sucesso: $out${NC}"
+                else
+                    echo -e "${RED}Falha ao compilar $out${NC}"
+                fi
+            fi
+        done
+    done
+    echo -e "${GREEN}Cross-compilação concluída.${NC}"
 else
     echo -e "${RED}Erro durante a compilação.${NC}"
     exit 1

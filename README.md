@@ -40,6 +40,11 @@ cd p2p-irc
 go build -o p2p-irc ./cmd/p2p-irc/main.go
 ```
 
+# Gerar binários para todas as plataformas suportadas (Windows, macOS, Linux):
+```bash
+./build-all.sh
+```
+
 ## Execução
 
 ```bash
