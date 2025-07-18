@@ -458,20 +458,42 @@ func handleQuitCommand(chatUI ui.Interface) {
 
 // handleMeshCommand gerencia comandos relacionados ao mesh
 func handleMeshCommand(args string, chatUI ui.Interface) {
-	if meshIntegration == nil {
-		chatUI.AddMessage("Funcionalidades mesh não estão disponíveis")
-		return
-	}
-
 	args = strings.TrimSpace(args)
 
 	switch args {
 	case "enable", "on":
+		// Inicializa componentes mesh se ainda não estiverem inicializados
+		if meshIntegration == nil {
+			// Carrega a configuração atual
+			configPath := "configs/config.toml"
+			config, err := loadConfig(configPath)
+			if err != nil {
+				chatUI.AddMessage(fmt.Sprintf("Erro ao carregar configuração: %v", err))
+				return
+			}
+			
+			// Habilita mesh na configuração
+			config.Mesh.Enabled = true
+			
+			// Inicializa componentes mesh
+			if err := initializeMesh(config, discoveryService); err != nil {
+				chatUI.AddMessage(fmt.Sprintf("Erro ao inicializar mesh: %v", err))
+				return
+			}
+			
+			chatUI.AddMessage("Componentes mesh inicializados com sucesso")
+		}
+		
 		chatUI.AddMessage("Funcionalidades mesh ativadas")
 		if meshUI != nil {
 			meshUI.Show()
 		}
 	case "disable", "off":
+		if meshIntegration == nil {
+			chatUI.AddMessage("Funcionalidades mesh não estão disponíveis")
+			return
+		}
+		
 		chatUI.AddMessage("Funcionalidades mesh desativadas")
 		if meshUI != nil {
 			meshUI.Hide()
