@@ -68,10 +68,13 @@ Script utilitário para reescrever autor/commit do histórico Git.
    ```bash
    ./build.sh
    ```
-2. **Rodar testes multi-peer/canal manualmente:**
+   - Todos os testes automatizados (incluindo integração multi-peer/canal com MockPeerDiscovery) são executados e devem passar.
+2. **Rodar testes determinísticos (mock) e multi-peer/canal manualmente:**
    ```bash
    go test ./tests -v
    ```
+   - Os testes em `tests/mesh_integration_test.go` e outros cobrem toda a lógica crítica do sistema de forma determinística, sem dependência de rede real.
+   - O plano de cobertura e próximos passos está documentado em `docs/PLANO_DE_TESTES_E_EVOLUCAO.md`.
 3. **Adicionar comandos/plugins dinâmicos:**
    - Siga os exemplos de `docs/EXTENSAO_COMANDOS_IRC.md`.
 4. **Integrar Bitchat:**

@@ -219,6 +219,26 @@ func (d *Discovery) handlePeerMessage(addr string, peerConn *PeerConnection, msg
             peerConn.channels[msg.Channel] = true
             fmt.Printf("[SYNC] Peer %s entrou no canal %s\n", addr, msg.Channel)
             peerConn.mu.Unlock()
+
+            // --- INÍCIO HANDSHAKE BIDIRECIONAL (ACK TEMPORÁRIO) ---
+            // Envia de volta todos os canais locais para o peer remetente
+            d.channelMu.RLock()
+            for channel := range d.channels {
+                if channel == msg.Channel {
+                    // Não reenvia o mesmo JOIN, só os outros
+                    continue
+                }
+                ackMsg := Message{
+                    Type:      TypeJoinChannel,
+                    Sender:    d.instanceID,
+                    Channel:   channel,
+                    Timestamp: time.Now(),
+                }
+                // Ignora erro, pois é handshake temporário
+                _ = peerConn.SendMessage(ackMsg)
+            }
+            d.channelMu.RUnlock()
+            // --- FIM HANDSHAKE BIDIRECIONAL (ACK TEMPORÁRIO) ---
         }
     case TypePartChannel:
         if msg.Channel != "" {
