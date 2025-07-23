@@ -1018,6 +1018,20 @@ func (d *Discovery) BroadcastPartChannel(channel string) {
     d.BroadcastMessage(msg)
 }
 
+// SendMessageToPeer envia uma mensagem para um peer específico
+func (d *Discovery) SendMessageToPeer(peerAddr string, msg Message) error {
+	d.connMu.RLock()
+	// Tenta encontrar a conexão pelo endereço completo (IP:Porta)
+	peerConn, exists := d.connections[peerAddr]
+	d.connMu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("peer não encontrado ou não conectado: %s", peerAddr)
+	}
+
+	return peerConn.SendMessage(msg)
+}
+
 // propagateMessage propaga uma mensagem para todos os peers que estão em um canal específico,
 // exceto para o peer que enviou a mensagem
 func (d *Discovery) propagateMessage(msg Message, excludeAddr string) {

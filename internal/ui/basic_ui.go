@@ -169,7 +169,7 @@ func (ui *BasicUI) SetPeers(peers []string) {
 
 // showHelp exibe a ajuda
 func (ui *BasicUI) showHelp() {
-	fmt.Println("\n=== Ajuda do P2P-IRC ===")
+	fmt.Println("=== Ajuda do P2P-IRC ===")
 	fmt.Println("Comandos disponíveis:")
 	fmt.Println("  /help - Exibe esta ajuda")
 	fmt.Println("  /nick <apelido> - Altera seu apelido")
@@ -180,7 +180,7 @@ func (ui *BasicUI) showHelp() {
 	fmt.Println("  /peers - Lista peers conectados")
 	fmt.Println("  /channels - Lista canais disponíveis")
 	fmt.Println("  /quit - Encerra a aplicação")
-	fmt.Println("=========================\n")
+	fmt.Println("=========================")
 }
 
 // Run inicia a interface do usuário

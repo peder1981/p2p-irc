@@ -6,11 +6,9 @@ require (
 	fyne.io/fyne/v2 v2.6.0
 	github.com/BurntSushi/toml v1.5.0
 	github.com/gdamore/tcell/v2 v2.7.1
-	github.com/google/uuid v1.3.1
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/huin/goupnp v1.3.0
 	github.com/rivo/tview v0.0.0-20250330220935-949945f8d922
-	github.com/schollz/progressbar/v3 v3.18.0
 	golang.org/x/crypto v0.37.0
 )
 
@@ -28,6 +26,7 @@ require (
 	github.com/go-text/render v0.2.0 // indirect
 	github.com/go-text/typesetting v0.2.1 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/google/uuid v1.3.1 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20241217141322-fcc2cadd6f08 // indirect
@@ -50,7 +49,6 @@ require (
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/miekg/dns v1.1.27 // indirect
-	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/pion/dtls/v2 v2.2.12 // indirect
 	github.com/pion/ice/v2 v2.3.36 // indirect
 	github.com/pion/interceptor v0.1.29 // indirect

@@ -1,7 +1,7 @@
-//go:build cgo
-// +build cgo
-//
-// GUI representa a interface gráfica do cliente P2P-IRC, compilada apenas quando cgo está habilitado.
+//go:build !tui
+
+// GUI representa a interface gráfica do cliente P2P-IRC.
+
 package ui
 
 import (
@@ -29,8 +29,10 @@ type GUI struct {
 	channelList  *widget.List
 	peerList     *widget.List
 	chatOutput   *widget.TextGrid
+	chatScroll   *container.Scroll
 	inputField   *widget.Entry
 	statusLabel  *widget.Label
+	meshUI       *MeshUI
 	
 	// Dados
 	channels      []string
@@ -125,6 +127,7 @@ func (g *GUI) initComponents() {
 	// Área de chat
 	g.chatOutput = widget.NewTextGrid()
 	g.chatOutput.SetText("")
+	g.chatScroll = container.NewScroll(g.chatOutput)
 	
 	// Campo de entrada
 	g.inputField = widget.NewEntry()
@@ -145,6 +148,9 @@ func (g *GUI) initComponents() {
 	
 	// Barra de status
 	g.statusLabel = widget.NewLabel("P2P-IRC iniciado")
+
+	// Inicializa a UI da Mesh
+	g.meshUI = NewMeshUI()
 }
 
 // setupLayout configura o layout da interface
@@ -169,7 +175,7 @@ func (g *GUI) setupLayout() {
 	// Painel direito: chat e entrada
 	chatContainer := container.NewBorder(
 		widget.NewLabel(fmt.Sprintf("Chat (%s)", g.activeChannel)), nil, nil, nil,
-		container.NewScroll(g.chatOutput),
+		g.chatScroll,
 	)
 	
 	inputContainer := container.NewBorder(
@@ -182,22 +188,30 @@ func (g *GUI) setupLayout() {
 		inputContainer,
 	)
 	rightPanel.SetOffset(0.9) // 90% para chat, 10% para entrada
-	
-	// Layout principal
+
+	// Cria as abas para alternar entre Chat e Mesh Status
+	tabs := container.NewAppTabs(
+		container.NewTabItem("Chat", rightPanel),
+		container.NewTabItem("Mesh Status", g.meshUI.GetView()),
+	)
+
+	// Layout principal com painel esquerdo e abas à direita
 	mainSplit := container.NewHSplit(
 		leftPanel,
-		rightPanel,
+		tabs,
 	)
-	mainSplit.SetOffset(0.2) // 20% para o painel esquerdo, 80% para o painel direito
-	
-	// Layout final com barra de status
-	mainLayout := container.NewBorder(
-		nil, g.statusLabel, nil, nil,
-		mainSplit,
+	mainSplit.SetOffset(0.25) // 25% para o painel esquerdo
+
+	// Layout final com a barra de status na parte inferior
+	finalLayout := container.NewBorder(
+		nil,          // Top
+		g.statusLabel, // Bottom
+		nil,          // Left
+		nil,          // Right
+		mainSplit,    // Center
 	)
-	
-	// Define o conteúdo da janela
-	g.mainWindow.SetContent(mainLayout)
+
+	g.mainWindow.SetContent(finalLayout)
 	
 	// Adiciona menu
 	g.setupMenu()
@@ -241,10 +255,14 @@ func (g *GUI) showHelp() {
 /join <#canal> - Entra em um canal
 /part [#canal] - Sai de um canal (usa o atual se não especificado)
 /msg <destino> <mensagem> - Envia mensagem privada
-/who - Lista usuários conectados
-/peers - Lista peers conectados
+/peers - Lista peers conectados na rede principal (mDNS)
 /quit - Encerra a aplicação
-/help - Exibe esta ajuda`
+/help - Exibe esta ajuda
+
+Comandos Mesh:
+/mesh status - Exibe o status da rede Bitchat
+/mesh peers - Lista os peers conectados via Bitchat
+/mesh send <peer_id> <mensagem> - Envia uma mensagem direta a um peer mesh`
 
 	dialog.ShowInformation("Comandos P2P-IRC", helpContent, g.mainWindow)
 }
@@ -277,6 +295,9 @@ func (g *GUI) AddMessage(msg string) {
 	// Atualiza a visualização de forma segura
 	text := strings.Join(content, "\n")
 	g.chatOutput.SetText(text)
+	if g.chatScroll != nil {
+		g.chatScroll.ScrollToBottom()
+	}
 }
 
 // AddMessageToChannel adiciona uma mensagem a um canal específico
@@ -307,6 +328,9 @@ func (g *GUI) AddMessageToChannel(channel, msg string) {
 	if isActiveChannel {
 		text := strings.Join(content, "\n")
 		g.chatOutput.SetText(text)
+		if g.chatScroll != nil {
+			g.chatScroll.ScrollToBottom()
+		}
 	}
 }
 
@@ -354,6 +378,9 @@ func (g *GUI) SetActiveChannel(channel string) {
 	g.updateChannelList()
 	text := strings.Join(content, "\n")
 	g.chatOutput.SetText(text)
+	if g.chatScroll != nil {
+		g.chatScroll.ScrollToBottom()
+	}
 	g.statusLabel.SetText(fmt.Sprintf("Canal ativo: %s", channel))
 }
 
@@ -415,6 +442,12 @@ func (g *GUI) RemoveChannel(channel string) {
 }
 
 // GetChannelList retorna a lista de canais
+// GetMeshUI retorna a instância da UI da mesh
+func (g *GUI) GetMeshUI() *MeshUI {
+	return g.meshUI
+}
+
+// GetChannelList retorna a lista de canais
 func (g *GUI) GetChannelList() []string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -440,11 +473,19 @@ func (g *GUI) ClearLogs() {
 	// Não faz nada, apenas para compatibilidade com a interface
 }
 
-// Run inicia a aplicação GUI
-func (g *GUI) Run() error {
-	log.Printf("[DEBUG] Iniciando GUI")
+// Run exibe a janela principal e inicia o loop de eventos
+func (g *GUI) Run() {
 	g.mainWindow.ShowAndRun()
-	return nil
+}
+
+// RunOnMain executa uma função na thread principal da UI de forma segura.
+func (g *GUI) RunOnMain(f func()) {
+	fyne.Do(f)
+}
+
+// Stop encerra a aplicação
+func (g *GUI) Stop() {
+	g.app.Quit()
 }
 
 // updateChannelList atualiza a lista de canais na interface
