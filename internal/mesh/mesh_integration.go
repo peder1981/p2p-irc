@@ -19,13 +19,14 @@ type MessageHandler func(senderID, channel, sender, content string)
 type MeshIntegration struct {
 	discoveryService *discovery.Discovery
 	config           MeshConfig
-	mu               sync.Mutex
+	mu               sync.RWMutex
 	isRunning        bool
 	peers            map[string]*MeshPeer
 	listener         net.PacketConn
 	quit             chan struct{}
 	selfID           []byte
 	messageHandler   MessageHandler
+	logger           func(string)
 }
 
 // MeshConfig contém as configurações para a integração com a rede mesh.
@@ -125,11 +126,23 @@ func (m *MeshIntegration) IsRunning() bool {
 	return m.isRunning
 }
 
+// SetLogger define a função de callback para registrar mensagens na UI.
+func (m *MeshIntegration) SetLogger(logger func(string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logger = logger
+}
+
 // GetPeers retorna a lista de peers conhecidos na rede mesh.
 // TODO: Implementar a lógica para obter peers da rede mesh.
 func (m *MeshIntegration) GetPeers() []*MeshPeer {
+	log.Println("[DEBUG] GetPeers: Tentando bloquear o mutex...")
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	log.Println("[DEBUG] GetPeers: Mutex bloqueado.")
+	defer func() {
+		m.mu.Unlock()
+		log.Println("[DEBUG] GetPeers: Mutex liberado.")
+	}()
 
 	peers := make([]*MeshPeer, 0, len(m.peers))
 	for _, peer := range m.peers {
@@ -150,6 +163,9 @@ func (m *MeshIntegration) handleIncomingPackets() {
 			if err != nil {
 				if m.isRunning {
 					log.Printf("Erro ao ler pacote da mesh: %v", err)
+					if m.logger != nil {
+						m.logger(fmt.Sprintf("[ERROR] Erro ao ler pacote da mesh: %v", err))
+					}
 				}
 				continue
 			}
@@ -161,13 +177,19 @@ func (m *MeshIntegration) handleIncomingPackets() {
 				continue
 			}
 
-			            peerID := hex.EncodeToString(packet.SenderID)
+			peerID := hex.EncodeToString(packet.SenderID)
+
+			log.Printf("[DEBUG] handleIncomingPackets: Pacote de %s. Tentando bloquear o mutex...", peerID)
+			m.mu.Lock()
+			log.Printf("[DEBUG] handleIncomingPackets: Pacote de %s. Mutex bloqueado.", peerID)
 
 			switch packet.Type {
 			case Announce:
-				m.mu.Lock()
 				if _, exists := m.peers[peerID]; !exists {
 					log.Printf("Novo peer da mesh descoberto por Announce: %s (%s)", peerID, addr.String())
+					if m.logger != nil {
+						m.logger(fmt.Sprintf("Novo peer descoberto: %s", peerID))
+					}
 				} else {
 					log.Printf("Peer existente atualizado por Announce: %s", peerID)
 				}
@@ -176,23 +198,21 @@ func (m *MeshIntegration) handleIncomingPackets() {
 					Address:  addr.String(),
 					LastSeen: time.Now(),
 				}
-				m.mu.Unlock()
 
 			case Leave:
-				m.mu.Lock()
 				if _, exists := m.peers[peerID]; exists {
 					log.Printf("Peer %s anunciou saída. Removendo.", peerID)
+					if m.logger != nil {
+						m.logger(fmt.Sprintf("Peer %s saiu.", peerID))
+					}
 					delete(m.peers, peerID)
 				}
-				m.mu.Unlock()
 
 			case Message:
 				msg, err := DecodeMessage(packet.Payload)
 				if err != nil {
 					log.Printf("Erro ao decodificar mensagem do peer %s: %v", peerID, err)
-					continue
-				}
-				if m.messageHandler != nil {
+				} else if m.messageHandler != nil {
 					m.messageHandler(peerID, msg.Channel, msg.Sender, msg.Content)
 				} else {
 					log.Printf("Mensagem recebida do peer %s, mas nenhum handler está configurado: [%s] %s: %s", peerID, msg.Channel, msg.Sender, msg.Content)
@@ -201,6 +221,9 @@ func (m *MeshIntegration) handleIncomingPackets() {
 			default:
 				log.Printf("Recebido pacote mesh de tipo não tratado (%d) do peer %s", packet.Type, peerID)
 			}
+
+			m.mu.Unlock()
+			log.Printf("[DEBUG] handleIncomingPackets: Pacote de %s. Mutex liberado.", peerID)
 		}
 	}
 }

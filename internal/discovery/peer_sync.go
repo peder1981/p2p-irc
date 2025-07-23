@@ -26,8 +26,9 @@ func (d *Discovery) SyncPeers() {
 	}
 	d.connMu.RUnlock()
 	
-	fmt.Printf("[DEBUG] Sincronizando %d canais com %d peers\n", 
-		len(channels), len(connections))
+	// Log da sincronização
+    // fmt.Printf("[DEBUG] Sincronizando %d canais com %d peers\n", 
+    //     len(channels), len(connections))
 
 	// Se não temos canais ou conexões, não há o que sincronizar
 	if len(channels) == 0 || len(connections) == 0 {

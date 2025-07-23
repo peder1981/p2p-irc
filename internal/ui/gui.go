@@ -13,7 +13,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
+
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
@@ -27,7 +27,7 @@ type GUI struct {
 	
 	// Componentes da interface
 	channelList  *widget.List
-	peerList     *widget.List
+	
 	chatOutput   *widget.TextGrid
 	chatScroll   *container.Scroll
 	inputField   *widget.Entry
@@ -36,7 +36,7 @@ type GUI struct {
 	
 	// Dados
 	channels      []string
-	peers         []string
+	
 	activeChannel string
 	debugMode     bool
 	chatContent   map[string][]string
@@ -74,7 +74,7 @@ func NewGUI() *GUI {
 		app:           a,
 		mainWindow:    w,
 		channels:      []string{"#general"},
-		peers:         []string{},
+		
 		activeChannel: "#general",
 		debugMode:     false,
 		chatContent:   make(map[string][]string),
@@ -114,15 +114,7 @@ func (g *GUI) initComponents() {
 		g.channelList.Refresh()
 	}
 	
-	// Lista de peers
-	g.peerList = widget.NewList(
-		func() int { return len(g.peers) },
-		func() fyne.CanvasObject { return widget.NewLabel("Template") },
-		func(id widget.ListItemID, obj fyne.CanvasObject) {
-			label := obj.(*widget.Label)
-			label.SetText(g.peers[id])
-		},
-	)
+
 	
 	// Área de chat
 	g.chatOutput = widget.NewTextGrid()
@@ -150,7 +142,7 @@ func (g *GUI) initComponents() {
 	g.statusLabel = widget.NewLabel("P2P-IRC iniciado")
 
 	// Inicializa a UI da Mesh
-	g.meshUI = NewMeshUI()
+	g.meshUI = NewMeshUI(g)
 }
 
 // setupLayout configura o layout da interface
@@ -161,16 +153,8 @@ func (g *GUI) setupLayout() {
 		container.NewScroll(g.channelList),
 	)
 	
-	peersContainer := container.NewBorder(
-		widget.NewLabel("Peers"), nil, nil, nil,
-		container.NewScroll(g.peerList),
-	)
-	
-	leftPanel := container.NewVSplit(
-		channelsContainer,
-		peersContainer,
-	)
-	leftPanel.SetOffset(0.7) // 70% para canais, 30% para peers
+	leftPanel := channelsContainer
+
 	
 	// Painel direito: chat e entrada
 	chatContainer := container.NewBorder(
@@ -361,8 +345,9 @@ func (g *GUI) SetDebugMode(enabled bool) {
 
 // SetActiveChannel define o canal ativo
 func (g *GUI) SetActiveChannel(channel string) {
+	normalizedChannel := strings.ToLower(channel)
 	g.mu.Lock()
-	g.activeChannel = channel
+	g.activeChannel = normalizedChannel
 	
 	// Prepara o conteúdo para atualização
 	var content []string
@@ -401,11 +386,12 @@ func (g *GUI) SetChannels(channels []string) {
 
 // AddChannel adiciona um canal à lista e atualiza a UI
 func (g *GUI) AddChannel(channel string) {
-	log.Printf("[DEBUG] Adicionando canal: %s", channel)
+	normalizedChannel := strings.ToLower(channel)
+	log.Printf("[DEBUG] Adicionando canal: %s (normalizado: %s)", channel, normalizedChannel)
 	g.mu.Lock()
-	if !contains(g.channels, channel) {
-		g.channels = append(g.channels, channel)
-		log.Printf("[DEBUG] Canal adicionado: %s, tamanho da lista: %d", channel, len(g.channels))
+	if !contains(g.channels, normalizedChannel) {
+		g.channels = append(g.channels, normalizedChannel)
+		log.Printf("[DEBUG] Canal adicionado: %s, tamanho da lista: %d", normalizedChannel, len(g.channels))
 	}
 	g.mu.Unlock()
 	g.updateChannelList()
@@ -413,23 +399,24 @@ func (g *GUI) AddChannel(channel string) {
 
 // RemoveChannel remove um canal da lista de canais
 func (g *GUI) RemoveChannel(channel string) {
+	normalizedChannel := strings.ToLower(channel)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	
+
 	// Remove o canal da lista de canais
 	newChannels := make([]string, 0, len(g.channels))
 	for _, ch := range g.channels {
-		if ch != channel {
+		if ch != normalizedChannel {
 			newChannels = append(newChannels, ch)
 		}
 	}
 	g.channels = newChannels
-	
+
 	// Remove o conteúdo do canal
-	delete(g.chatContent, channel)
-	
+	delete(g.chatContent, normalizedChannel)
+
 	// Se o canal ativo foi removido, define o primeiro canal como ativo
-	if g.activeChannel == channel {
+	if g.activeChannel == normalizedChannel {
 		if len(g.channels) > 0 {
 			g.activeChannel = g.channels[0]
 		} else {
@@ -459,14 +446,7 @@ func (g *GUI) GetChannelList() []string {
 	return channels
 }
 
-// SetPeers atualiza a lista de peers
-func (g *GUI) SetPeers(peers []string) {
-	g.mu.Lock()
-	g.peers = peers
-	g.mu.Unlock()
-	
-	g.updatePeerList()
-}
+
 
 // ClearLogs limpa os logs (método vazio para compatibilidade)
 func (g *GUI) ClearLogs() {
@@ -490,29 +470,23 @@ func (g *GUI) Stop() {
 
 // updateChannelList atualiza a lista de canais na interface
 func (g *GUI) updateChannelList() {
-    if g.channelList == nil {
-        return
-    }
-    fyne.Do(func() {
-        canvas.Refresh(g.channelList)
-    })
+	if g.channelList == nil {
+		return
+	}
+	// Executa na thread principal para garantir a segurança
+	g.RunOnMain(func() {
+		g.channelList.Refresh()
+	})
 }
 
-// updatePeerList atualiza a lista de peers na interface
-func (g *GUI) updatePeerList() {
-    if g.peerList == nil {
-        return
-    }
-    fyne.Do(func() {
-        canvas.Refresh(g.peerList)
-    })
-}
+
 
 func contains(s []string, e string) bool {
-    for _, a := range s {
-        if a == e {
-            return true
-        }
-    }
-    return false
+	normalizedE := strings.ToLower(e)
+	for _, a := range s {
+		if strings.ToLower(a) == normalizedE {
+			return true
+		}
+	}
+	return false
 }

@@ -284,8 +284,8 @@ func (d *DHT) RegisterPeer(key string, peerID string) {
 
 // GetPeers retorna todos os peers para uma chave
 func (d *DHT) GetPeers(key string) []string {
-    d.mu.RLock()
-    defer d.mu.RUnlock()
+    d.mu.Lock()
+    defer d.mu.Unlock()
     if peers, ok := d.store[key]; ok {
         result := make([]string, 0, len(peers))
         for peer := range peers {

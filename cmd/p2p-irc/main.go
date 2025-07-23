@@ -127,6 +127,13 @@ func main() {
 		log.Fatalf("Erro ao inicializar o serviço de descoberta: %v", err)
 	}
 
+	// Inicia o serviço de descoberta em uma goroutine para não bloquear a UI
+	go func() {
+		if err := discoveryService.Start(); err != nil {
+			log.Printf("[ERROR] Falha ao iniciar o serviço de descoberta: %v", err)
+		}
+	}()
+
 	gui := ui.NewGUI()
 	gui.SetChannels([]string{*channelFlag})
 	gui.SetDebugMode(cfg.UI.DebugMode)
@@ -161,7 +168,7 @@ func main() {
 		}
 	})
 
-	go monitorPeers(discoveryService, gui)
+	
 	go startTCPServer(discoveryService, gui)
 
 	gui.Run()
@@ -170,11 +177,15 @@ func main() {
 // startMeshPeerUpdater atualiza periodicamente a lista de peers da mesh na UI.
 // startMeshPeerUpdater atualiza periodicamente a lista de peers da mesh na UI.
 func startMeshPeerUpdater(meshManager *mesh.MeshManager, gui *ui.GUI) {
+	// log.Println("[DEBUG] startMeshPeerUpdater: Goroutine iniciada.")
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
+		// log.Println("[DEBUG] startMeshPeerUpdater: Ticker ativado, buscando peers...")
 		peers := meshManager.GetPeers()
+		// log.Printf("[DEBUG] startMeshPeerUpdater: %d peers encontrados.", len(peers))
+
 		peerInfos := make([]ui.PeerInfo, len(peers))
 		for i, p := range peers {
 			peerInfos[i] = ui.PeerInfo{
@@ -183,12 +194,18 @@ func startMeshPeerUpdater(meshManager *mesh.MeshManager, gui *ui.GUI) {
 			}
 		}
 
-		// Executa a atualização da UI na thread principal para evitar deadlocks
+		// log.Println("[DEBUG] startMeshPeerUpdater: Agendando atualização da UI em RunOnMain...")
 		gui.RunOnMain(func() {
+			// log.Println("[DEBUG] startMeshPeerUpdater: Dentro de RunOnMain. Obtendo MeshUI...")
 			if meshUI := gui.GetMeshUI(); meshUI != nil {
+				// log.Printf("[DEBUG] startMeshPeerUpdater: Atualizando a lista de peers na UI com %d peers.", len(peerInfos))
 				meshUI.UpdatePeerList(peerInfos)
+				// log.Println("[DEBUG] startMeshPeerUpdater: Atualização da UI concluída.")
+			} else {
+				// log.Println("[DEBUG] startMeshPeerUpdater: MeshUI é nulo, pulando atualização.")
 			}
 		})
+		// log.Println("[DEBUG] startMeshPeerUpdater: Agendamento de RunOnMain concluído. Aguardando próximo ticker.")
 	}
 }
 
@@ -198,6 +215,9 @@ func handleCommand(command string, client *irc.Client, gui *ui.GUI, discoverySer
 		if activeChannel == "" {
 			return fmt.Errorf("nenhum canal ativo. Use /join #canal")
 		}
+		// Adiciona a mensagem à UI localmente antes de enviar
+		myNick := client.GetNickname()
+		gui.AddMessageToChannel(activeChannel, fmt.Sprintf("<%s> %s", myNick, command))
 		return client.HandleCommand(fmt.Sprintf("PRIVMSG %s :%s", activeChannel, command))
 	}
 
@@ -206,6 +226,15 @@ func handleCommand(command string, client *irc.Client, gui *ui.GUI, discoverySer
 	args := parts[1:]
 
 	switch cmd {
+	case "/join":
+		if len(args) < 1 {
+			return fmt.Errorf("uso: /join <#canal>")
+		}
+		channel := strings.ToLower(args[0])
+		gui.AddChannel(channel)
+		gui.SetActiveChannel(channel)
+		// Reconstrói o comando com o nome normalizado para o cliente IRC
+		return client.HandleCommand(fmt.Sprintf("/join %s", channel))
 	case "/mesh":
 		if len(args) == 0 {
 			return fmt.Errorf("subcomando mesh ausente. Uso: /mesh [enable|disable|status|peers|send]")
@@ -216,12 +245,17 @@ func handleCommand(command string, client *irc.Client, gui *ui.GUI, discoverySer
 			go func() {
 				log.Println("[DEBUG] Goroutine de ativação da mesh iniciada.")
 				if err := meshManager.Start(); err != nil {
-					log.Printf("[ERROR] meshManager.Start() falhou: %v", err)
 					gui.RunOnMain(func() {
 						gui.AddLogMessage(fmt.Sprintf("Falha ao ativar a rede mesh: %v", err))
 					})
 					return
 				}
+
+				// Conecta o logger da mesh à UI
+				if integration := meshManager.GetIntegration(); integration != nil {
+					integration.SetLogger(gui.GetMeshUI().Log)
+				}
+
 				log.Println("[DEBUG] meshManager.Start() concluído com sucesso.")
 				gui.RunOnMain(func() {
 					gui.AddLogMessage("Rede mesh ativada com sucesso.")
@@ -276,22 +310,6 @@ func handleCommand(command string, client *irc.Client, gui *ui.GUI, discoverySer
 	return nil
 }
 
-// monitorPeers atualiza a UI com a lista de peers periodicamente
-func monitorPeers(discoveryService *discovery.Discovery, gui ui.Interface) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		// GetPeers() do discovery service retorna []dht.Node
-		peersNode := discoveryService.GetPeers()
-		// SetPeers() da GUI espera []string, então precisamos converter
-		peersStr := make([]string, len(peersNode))
-		for i, peer := range peersNode {
-			peersStr[i] = peer.Addr.String()
-		}
-		gui.SetPeers(peersStr)
-	}
-}
 func startTCPServer(discoveryService *discovery.Discovery, gui ui.Interface) {
 	addr := fmt.Sprintf(":%d", discoveryService.GetPort())
 	ln, err := net.Listen("tcp", addr)

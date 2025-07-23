@@ -19,8 +19,7 @@ type Interface interface {
 	GetActiveChannel() string
 	GetChannelList() []string
 
-	// Métodos para gerenciar peers
-	SetPeers(peers []string)
+
 
 	// Configurações
 	SetDebugMode(enabled bool)

@@ -1,20 +1,22 @@
 package discovery
 
 import (
-    "context"
-    "crypto/rand"
-    "encoding/hex"
-    "encoding/json"
-    "fmt"
-    "net"
-    "strings"
-    "sync"
-    "time"
+	"bufio"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"strings"
+	"sync"
+	"time"
 
-    "github.com/grandcat/zeroconf"
-    "github.com/huin/goupnp/dcps/internetgateway2"
-    "github.com/peder1981/p2p-irc/internal/dht"
-    "bufio"
+	"github.com/grandcat/zeroconf"
+	"github.com/huin/goupnp/dcps/internetgateway2"
+
+	"github.com/peder1981/p2p-irc/internal/dht"
 )
 
 const (
@@ -77,7 +79,8 @@ func New(bootstrapPeers []string, port int) (*Discovery, error) {
     ctx, cancel := context.WithCancel(context.Background())
 
     // Gera um ID único para esta instância
-    instanceID := generateInstanceID()
+    // Gera um ID baseado na porta para garantir unicidade
+	instanceID := fmt.Sprintf("instance-%d", port)
 
     // Tenta encontrar uma porta disponível
     if port == 0 {
@@ -308,11 +311,9 @@ func (d *Discovery) Stop() {
 
 // Start inicia o serviço de descoberta
 func (d *Discovery) Start() error {
-    var err error
 
-    // Registra o serviço no mDNS
-    err = d.startMDNS()
-    if err != nil {
+    // Inicia o serviço mDNS
+    if err := d.startMDNS(d.ctx); err != nil {
         return fmt.Errorf("erro ao iniciar mDNS: %w", err)
     }
 
@@ -331,7 +332,7 @@ func (d *Discovery) Start() error {
 }
 
 // startMDNS inicia o serviço mDNS com retry
-func (d *Discovery) startMDNS() error {
+func (d *Discovery) startMDNS(ctx context.Context) error {
     var err error
     for i := 0; i < maxRetries; i++ {
         // Gera um ID único para esta instância
@@ -342,14 +343,27 @@ func (d *Discovery) startMDNS() error {
 
         // Registra o serviço em todas as interfaces
         interfaces := getNetInterfaces()
+        log.Printf("[DEBUG] Interfaces de rede encontradas para o mDNS: %+v", interfaces)
+        if len(interfaces) == 0 {
+            log.Println("[WARN] Nenhuma interface de rede encontrada para o registro mDNS. O serviço pode não ser descoberto.")
+        }
+
+        instanceName := fmt.Sprintf("%s-%d", d.serviceName, d.port)
+        log.Printf("[DEBUG] Registrando serviço mDNS com o nome: %s na porta %d", instanceName, d.port)
         d.zeroconf, err = zeroconf.Register(
-            "p2p-irc-"+d.instanceID,
+            instanceName,
             serviceType,
             domain,
             d.port,
             txt,
             interfaces,
         )
+
+        if err != nil {
+            log.Printf("[ERROR] Erro ao registrar o serviço mDNS: %v", err)
+        } else {
+            log.Println("[INFO] Serviço mDNS registrado com sucesso.")
+        }
 
         if err == nil {
             fmt.Printf("[INFO] Serviço registrado em %d interfaces (instanceID: %s, porta: %d)\n", 
@@ -378,10 +392,17 @@ func getNetInterfaces() []net.Interface {
     }
 
     for _, iface := range ifaces {
-        // Ignora apenas interfaces down
-        if iface.Flags&net.FlagUp == 0 {
+        // Filtra interfaces que não estão ativas, são de loopback ou não suportam multicast
+        if (iface.Flags&net.FlagUp == 0) || (iface.Flags&net.FlagLoopback != 0) || (iface.Flags&net.FlagMulticast == 0) {
             continue
         }
+
+        // Adiciona apenas interfaces com um endereço IP válido
+        addrs, err := iface.Addrs()
+        if err != nil || len(addrs) == 0 {
+            continue
+        }
+
         interfaces = append(interfaces, iface)
     }
 
