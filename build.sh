@@ -62,3 +62,14 @@ for plat in "${platforms[@]}"; do
 done
 
 echo -e "${GREEN}Todos os binários foram criados em ${BIN_DIR}${NC}"
+
+# Executa testes automatizados (inclui testes multi-peer/canal)
+echo -e "${YELLOW}Executando testes automatizados...${NC}"
+if go test ./... -v; then
+    echo -e "${GREEN}Todos os testes passaram com sucesso!${NC}"
+else
+    echo -e "${RED}Algum teste falhou. Corrija antes de prosseguir.${NC}"
+    exit 1
+fi
+
+echo -e "\nConsulte a documentação dos scripts e comandos dinâmicos em docs/SCRIPTS.md e docs/EXTENSAO_COMANDOS_IRC.md.\n"
