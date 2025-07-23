@@ -10,21 +10,62 @@ import (
 )
 
 // TerminalUI é uma implementação simples de interface de terminal
+// Agora utiliza IRCRouter para comandos e CommandHistory para histórico navegável.
+// Para adicionar comandos customizados, registre-os no campo router do TerminalUI.
 type TerminalUI struct {
+	ChannelManager
+
 	activeChannel string
 	channels      []string
 	debugMode     bool
 	inputHandler  func(string)
 	mu            sync.RWMutex
+	quit          chan struct{}
+	chatMessages  []string
+
+	// Modularização
+	router         *IRCRouter
+	commandHistory *CommandHistory
 }
 
 // NewTerminalUI cria uma nova interface de terminal
 func NewTerminalUI() *TerminalUI {
-	return &TerminalUI{
+	ui := &TerminalUI{
 		activeChannel: "#general",
-		channels:      []string{},
+		channels:      []string{"#general"},
 		debugMode:     false,
+		router:        NewIRCRouter(),
+		commandHistory: NewCommandHistory(50),
 	}
+	// Registrar comandos básicos no roteador
+	ui.router.Register("help", func(cmd *IRCCommand, _ *GUI, _ func(string)) bool {
+		fmt.Println("=== Ajuda do P2P-IRC ===")
+		fmt.Println("Comandos disponíveis:")
+		fmt.Println("  /help - Exibe esta ajuda")
+		fmt.Println("  /channels - Lista canais disponíveis")
+		fmt.Println("  /quit - Encerra a aplicação")
+		fmt.Println("=========================")
+		return true
+	})
+	ui.router.Register("channels", func(cmd *IRCCommand, _ *GUI, _ func(string)) bool {
+		ui.mu.RLock()
+		defer ui.mu.RUnlock()
+		fmt.Println("[INFO] Canais disponíveis:")
+		for _, channel := range ui.channels {
+			if channel == ui.activeChannel {
+				fmt.Printf("  > %s (ativo)\n", channel)
+			} else {
+				fmt.Printf("  - %s\n", channel)
+			}
+		}
+		return true
+	})
+	ui.router.Register("quit", func(cmd *IRCCommand, _ *GUI, _ func(string)) bool {
+		fmt.Println("Encerrando aplicação...")
+		os.Exit(0)
+		return true
+	})
+	return ui
 }
 
 // SetInputHandler define a função de callback para entrada do usuário
@@ -52,10 +93,6 @@ func (ui *TerminalUI) AddMessageToChannel(channel, msg string) {
 
 // AddLogMessage adiciona uma mensagem de log
 func (ui *TerminalUI) AddLogMessage(msg string) {
-	if ui.debugMode {
-		timestamp := time.Now().Format("[2006-01-02 15:04:05]")
-		fmt.Printf("[DEBUG] %s %s\n", timestamp, msg)
-	}
 }
 
 // ClearLogs limpa os logs (não faz nada no terminal)
@@ -123,15 +160,42 @@ func (ui *TerminalUI) SetPeers(peers []string) {
 // Run inicia a interface de terminal
 func (ui *TerminalUI) Run() error {
 	fmt.Println("P2P-IRC Terminal iniciado. Digite /help para ver os comandos disponíveis.")
-	
+
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		input := scanner.Text()
-		
+		if input == "" {
+			continue
+		}
+		// Histórico de comandos
+		ui.commandHistory.Add(input)
+		if input == "/prev" {
+			cmd := ui.commandHistory.Prev()
+			if cmd != "" {
+				fmt.Printf("[HISTÓRICO] %s\n", cmd)
+			}
+			continue
+		} else if input == "/next" {
+			cmd := ui.commandHistory.Next()
+			if cmd != "" {
+				fmt.Printf("[HISTÓRICO] %s\n", cmd)
+			}
+			continue
+		}
+		// Despacha comando via roteador
+		if strings.HasPrefix(input, "/") {
+			if ui.router.Dispatch(input, nil, func(fallback string) {
+				if ui.inputHandler != nil {
+					ui.inputHandler(fallback)
+				}
+			}) {
+				continue
+			}
+		}
+		// Se há um handler definido, chama-o
 		if ui.inputHandler != nil {
 			ui.inputHandler(input)
 		}
 	}
-	
 	return scanner.Err()
 }

@@ -23,7 +23,7 @@ func (d *Discovery) SendChatMessageToChannel(channel, content, sender string) {
 		Timestamp: time.Now(),
 	}
 
-	fmt.Printf("[DEBUG] Enviando mensagem para canal %s: %s (de %s)\n", channel, content, sender)
+
 
 	// Envia para todos os peers que estão no canal
 	d.broadcastToChannel(msg, channel)
@@ -34,8 +34,7 @@ func (d *Discovery) broadcastToChannel(msg Message, channel string) {
 	d.connMu.RLock()
 	defer d.connMu.RUnlock()
 
-	fmt.Printf("[DEBUG] Broadcast de mensagem para canal %s, %d peers conectados\n", 
-		channel, len(d.connections))
+
 
 	// Conta quantos peers receberam a mensagem
 	sentCount := 0
@@ -43,17 +42,15 @@ func (d *Discovery) broadcastToChannel(msg Message, channel string) {
 	for addr, peerConn := range d.connections {
 		// Verifica se o peer está no canal da mensagem
 		if !peerConn.IsInChannel(channel) {
-			fmt.Printf("[DEBUG] Peer %s não está no canal %s, ignorando\n", addr, channel)
+
 			continue
 		}
 
 		// Envia a mensagem
 		if err := peerConn.SendMessage(msg); err != nil {
 			fmt.Printf("[ERRO] Falha ao enviar mensagem para peer %s: %v\n", addr, err)
-		} else {
-			fmt.Printf("[DEBUG] Mensagem enviada com sucesso para peer %s\n", addr)
-			sentCount++
 		}
+		sentCount++
 	}
 
 	fmt.Printf("[INFO] Mensagem enviada para %d peers no canal %s\n", sentCount, channel)

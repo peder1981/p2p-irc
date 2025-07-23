@@ -5,6 +5,7 @@
 package ui
 
 import (
+	"github.com/peder1981/p2p-irc/internal/discovery"
 	"fmt"
 	"log"
 	"strings"
@@ -21,6 +22,11 @@ import (
 
 // GUI representa a interface gráfica do cliente P2P-IRC
 type GUI struct {
+	ChannelManager
+
+	discovery discovery.PeerDiscovery
+	channels      []string
+	activeChannel string
 	// Aplicação Fyne
 	app        fyne.App
 	mainWindow fyne.Window
@@ -35,22 +41,26 @@ type GUI struct {
 	meshUI       *MeshUI
 	
 	// Dados
-	channels      []string
-	
-	activeChannel string
+
+	// Histórico de comandos
+	commandHistory *CommandHistory
+
+	// Roteador de comandos IRC
+	router *IRCRouter
+
 	debugMode     bool
 	chatContent   map[string][]string
-	
+
 	// Sincronização
 	mu            sync.RWMutex
-	
+
 	// Callbacks
 	inputHandler  func(string)
 }
 
 // NewGUI cria uma nova interface gráfica sem adicionar canais durante a construção
-func NewGUI() *GUI {
-	log.Printf("[DEBUG] Inicializando nova GUI")
+func NewGUI(discovery discovery.PeerDiscovery) *GUI {
+
 	// Cria a aplicação Fyne
 	a := app.New()
 	// Carrega recurso do ícone
@@ -70,7 +80,8 @@ func NewGUI() *GUI {
 	w.Resize(fyne.NewSize(800, 600))
 	
 	// Cria a estrutura GUI com canal padrão
-	gui := &GUI{
+		gui := &GUI{
+		discovery: discovery,
 		app:           a,
 		mainWindow:    w,
 		channels:      []string{"#general"},
@@ -89,7 +100,7 @@ func NewGUI() *GUI {
 
 // initComponents inicializa os componentes da interface
 func (g *GUI) initComponents() {
-	log.Printf("[DEBUG] Inicializando componentes da GUI")
+
 	// Lista de canais
 	g.channelList = widget.NewList(
 		func() int { return len(g.channels) },
@@ -107,7 +118,7 @@ func (g *GUI) initComponents() {
 	if g.channelList == nil {
 		log.Printf("[ERRO] Falha ao inicializar g.channelList")
 	} else {
-		log.Printf("[DEBUG] g.channelList inicializado com sucesso")
+
 	}
 	g.channelList.OnSelected = func(id widget.ListItemID) {
 		g.SetActiveChannel(g.channels[id])
@@ -124,16 +135,40 @@ func (g *GUI) initComponents() {
 	// Campo de entrada
 	g.inputField = widget.NewEntry()
 	g.inputField.SetPlaceHolder("Digite uma mensagem ou comando...")
+
+	// Inicializa CommandHistory
+	g.commandHistory = NewCommandHistory(50)
+
+	// Workaround: intercepta eventos de tecla no nível da janela para navegação de histórico
+	g.mainWindow.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+		canvas := g.app.Driver().CanvasForObject(g.inputField)
+		if canvas != nil && canvas.Focused() == g.inputField {
+			var cmd string
+			if ev.Name == fyne.KeyUp {
+				cmd = g.commandHistory.Prev()
+			} else if ev.Name == fyne.KeyDown {
+				cmd = g.commandHistory.Next()
+			}
+			if cmd != "" || ev.Name == fyne.KeyDown {
+				g.inputField.SetText(cmd)
+				g.inputField.CursorColumn = len(cmd)
+			}
+		}
+	})
+
 	g.inputField.OnSubmitted = func(text string) {
 		if text == "" {
 			return
 		}
-		
+		g.commandHistory.Add(text)
 		// Limpa o campo de entrada
 		g.inputField.SetText("")
-		
 		// Se há um handler definido, chama-o
 		if g.inputHandler != nil {
+			// Modular: roteador genérico
+			if HandleIRCCommand(g, g.discovery, text, g.inputHandler) {
+				return
+			}
 			g.inputHandler(text)
 		}
 	}
@@ -253,7 +288,14 @@ Comandos Mesh:
 
 // SetInputHandler define a função chamada ao enviar mensagem
 func (g *GUI) SetInputHandler(handler func(string)) {
-	g.inputHandler = handler
+	g.inputHandler = func(input string) {
+		if g.router != nil && g.router.Dispatch(input, g, handler) {
+			return
+		}
+		if handler != nil {
+			handler(input)
+		}
+	}
 }
 
 // AddMessage adiciona uma mensagem ao chat
@@ -311,9 +353,11 @@ func (g *GUI) AddMessageToChannel(channel, msg string) {
 	// Se for o canal ativo, atualiza a visualização
 	if isActiveChannel {
 		text := strings.Join(content, "\n")
-		g.chatOutput.SetText(text)
-		if g.chatScroll != nil {
-			g.chatScroll.ScrollToBottom()
+		if g.chatOutput != nil {
+			g.chatOutput.SetText(text)
+			if g.chatScroll != nil {
+				g.chatScroll.ScrollToBottom()
+			}
 		}
 	}
 }
@@ -326,7 +370,7 @@ func (g *GUI) AddLogMessage(msg string) {
 	g.mu.RUnlock()
 	
 	if debugMode {
-		g.AddMessage(fmt.Sprintf("[DEBUG] %s", msg))
+
 	}
 }
 
@@ -387,11 +431,11 @@ func (g *GUI) SetChannels(channels []string) {
 // AddChannel adiciona um canal à lista e atualiza a UI
 func (g *GUI) AddChannel(channel string) {
 	normalizedChannel := strings.ToLower(channel)
-	log.Printf("[DEBUG] Adicionando canal: %s (normalizado: %s)", channel, normalizedChannel)
+
 	g.mu.Lock()
 	if !contains(g.channels, normalizedChannel) {
 		g.channels = append(g.channels, normalizedChannel)
-		log.Printf("[DEBUG] Canal adicionado: %s, tamanho da lista: %d", normalizedChannel, len(g.channels))
+
 	}
 	g.mu.Unlock()
 	g.updateChannelList()

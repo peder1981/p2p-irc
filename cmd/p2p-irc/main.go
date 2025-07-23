@@ -134,7 +134,7 @@ func main() {
 		}
 	}()
 
-	gui := ui.NewGUI()
+	gui := ui.NewGUI(discoveryService)
 	gui.SetChannels([]string{*channelFlag})
 	gui.SetDebugMode(cfg.UI.DebugMode)
 
@@ -177,14 +177,14 @@ func main() {
 // startMeshPeerUpdater atualiza periodicamente a lista de peers da mesh na UI.
 // startMeshPeerUpdater atualiza periodicamente a lista de peers da mesh na UI.
 func startMeshPeerUpdater(meshManager *mesh.MeshManager, gui *ui.GUI) {
-	// log.Println("[DEBUG] startMeshPeerUpdater: Goroutine iniciada.")
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		// log.Println("[DEBUG] startMeshPeerUpdater: Ticker ativado, buscando peers...")
+
 		peers := meshManager.GetPeers()
-		// log.Printf("[DEBUG] startMeshPeerUpdater: %d peers encontrados.", len(peers))
+
 
 		peerInfos := make([]ui.PeerInfo, len(peers))
 		for i, p := range peers {
@@ -194,18 +194,18 @@ func startMeshPeerUpdater(meshManager *mesh.MeshManager, gui *ui.GUI) {
 			}
 		}
 
-		// log.Println("[DEBUG] startMeshPeerUpdater: Agendando atualização da UI em RunOnMain...")
+
 		gui.RunOnMain(func() {
-			// log.Println("[DEBUG] startMeshPeerUpdater: Dentro de RunOnMain. Obtendo MeshUI...")
+
 			if meshUI := gui.GetMeshUI(); meshUI != nil {
-				// log.Printf("[DEBUG] startMeshPeerUpdater: Atualizando a lista de peers na UI com %d peers.", len(peerInfos))
+
 				meshUI.UpdatePeerList(peerInfos)
-				// log.Println("[DEBUG] startMeshPeerUpdater: Atualização da UI concluída.")
+
 			} else {
-				// log.Println("[DEBUG] startMeshPeerUpdater: MeshUI é nulo, pulando atualização.")
+
 			}
 		})
-		// log.Println("[DEBUG] startMeshPeerUpdater: Agendamento de RunOnMain concluído. Aguardando próximo ticker.")
+
 	}
 }
 
@@ -243,7 +243,7 @@ func handleCommand(command string, client *irc.Client, gui *ui.GUI, discoverySer
 		case "enable":
 			gui.AddLogMessage("Iniciando rede mesh em segundo plano...")
 			go func() {
-				log.Println("[DEBUG] Goroutine de ativação da mesh iniciada.")
+
 				if err := meshManager.Start(); err != nil {
 					gui.RunOnMain(func() {
 						gui.AddLogMessage(fmt.Sprintf("Falha ao ativar a rede mesh: %v", err))
@@ -256,11 +256,11 @@ func handleCommand(command string, client *irc.Client, gui *ui.GUI, discoverySer
 					integration.SetLogger(gui.GetMeshUI().Log)
 				}
 
-				log.Println("[DEBUG] meshManager.Start() concluído com sucesso.")
+
 				gui.RunOnMain(func() {
 					gui.AddLogMessage("Rede mesh ativada com sucesso.")
 				})
-				log.Println("[DEBUG] Iniciando o atualizador de peers da mesh...")
+
 				go startMeshPeerUpdater(meshManager, gui)
 			}()
 		case "disable":

@@ -136,12 +136,12 @@ func (m *MeshIntegration) SetLogger(logger func(string)) {
 // GetPeers retorna a lista de peers conhecidos na rede mesh.
 // TODO: Implementar a lógica para obter peers da rede mesh.
 func (m *MeshIntegration) GetPeers() []*MeshPeer {
-	log.Println("[DEBUG] GetPeers: Tentando bloquear o mutex...")
+
 	m.mu.Lock()
-	log.Println("[DEBUG] GetPeers: Mutex bloqueado.")
+
 	defer func() {
 		m.mu.Unlock()
-		log.Println("[DEBUG] GetPeers: Mutex liberado.")
+
 	}()
 
 	peers := make([]*MeshPeer, 0, len(m.peers))
@@ -179,9 +179,9 @@ func (m *MeshIntegration) handleIncomingPackets() {
 
 			peerID := hex.EncodeToString(packet.SenderID)
 
-			log.Printf("[DEBUG] handleIncomingPackets: Pacote de %s. Tentando bloquear o mutex...", peerID)
+
 			m.mu.Lock()
-			log.Printf("[DEBUG] handleIncomingPackets: Pacote de %s. Mutex bloqueado.", peerID)
+
 
 			switch packet.Type {
 			case Announce:
@@ -223,7 +223,7 @@ func (m *MeshIntegration) handleIncomingPackets() {
 			}
 
 			m.mu.Unlock()
-			log.Printf("[DEBUG] handleIncomingPackets: Pacote de %s. Mutex liberado.", peerID)
+
 		}
 	}
 }

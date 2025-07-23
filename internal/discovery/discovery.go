@@ -302,11 +302,12 @@ func (d *Discovery) nodeExists(nodeID dht.NodeID) bool {
 }
 
 // Stop para todos os serviços de descoberta
-func (d *Discovery) Stop() {
+func (d *Discovery) Stop() error {
     d.cancel()
     if d.zeroconf != nil {
         d.zeroconf.Shutdown()
     }
+    return nil
 }
 
 // Start inicia o serviço de descoberta
@@ -343,13 +344,13 @@ func (d *Discovery) startMDNS(ctx context.Context) error {
 
         // Registra o serviço em todas as interfaces
         interfaces := getNetInterfaces()
-        log.Printf("[DEBUG] Interfaces de rede encontradas para o mDNS: %+v", interfaces)
+
         if len(interfaces) == 0 {
             log.Println("[WARN] Nenhuma interface de rede encontrada para o registro mDNS. O serviço pode não ser descoberto.")
         }
 
         instanceName := fmt.Sprintf("%s-%d", d.serviceName, d.port)
-        log.Printf("[DEBUG] Registrando serviço mDNS com o nome: %s na porta %d", instanceName, d.port)
+
         d.zeroconf, err = zeroconf.Register(
             instanceName,
             serviceType,
@@ -739,7 +740,7 @@ func (d *Discovery) readMessages(addr string, peerConn *PeerConnection) {
         
         // Verifica se recebemos dados
         if n == 0 {
-            fmt.Printf("[DEBUG] Nenhum dado recebido do peer %s\n", addr)
+
             continue
         }
         
@@ -828,7 +829,7 @@ func (d *Discovery) processMessage(addr string, peerConn *PeerConnection, msg Me
             
             if alreadyInChannel {
                 // O peer já está no canal, não precisamos reconfirmar
-                fmt.Printf("[DEBUG] Peer %s já está no canal %s, ignorando JOIN redundante\n", addr, msg.Channel)
+
                 return
             }
             
@@ -850,12 +851,10 @@ func (d *Discovery) processMessage(addr string, peerConn *PeerConnection, msg Me
                 if err := peerConn.SendMessage(joinMsg); err != nil {
                     fmt.Printf("[ERRO] Erro ao confirmar JOIN para canal %s com peer %s: %v\n", 
                         msg.Channel, addr, err)
-                } else {
-                    fmt.Printf("[DEBUG] JOIN confirmado para canal %s com peer %s\n", 
-                        msg.Channel, addr)
                 }
             }
         }
+
         
     case TypePartChannel:
         // Peer saiu de um canal

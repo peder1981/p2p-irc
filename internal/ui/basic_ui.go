@@ -10,13 +10,22 @@ import (
 )
 
 // BasicUI representa uma interface de terminal simples sem dependências externas
+// Agora utiliza IRCRouter para comandos e CommandHistory para histórico navegável.
+// Para adicionar comandos customizados, registre-os no campo router do BasicUI.
 type BasicUI struct {
+	ChannelManager
+
 	chatMessages  []string
 	channels      []string
 	peers         []string
 	activeChannel string
 	debugMode     bool
 	inputHandler  func(string)
+	quit          chan struct{}
+
+	// Modularização
+	router         *IRCRouter
+	commandHistory *CommandHistory
 	
 	// Sincronização
 	mu            sync.RWMutex
@@ -28,14 +37,40 @@ type BasicUI struct {
 
 // NewBasicUI cria uma nova interface de terminal simples
 func NewBasicUI() *BasicUI {
-	return &BasicUI{
+	ui := &BasicUI{
 		chatMessages:  make([]string, 0),
 		channels:      []string{"#general"},
 		peers:         []string{},
 		activeChannel: "#general",
 		debugMode:     false,
 		done:          make(chan struct{}),
+		router:        NewIRCRouter(),
+		commandHistory: NewCommandHistory(50),
 	}
+	// Registrar comandos básicos no roteador
+	ui.router.Register("help", func(cmd *IRCCommand, _ *GUI, _ func(string)) bool {
+		ui.showHelp()
+		return true
+	})
+	ui.router.Register("channels", func(cmd *IRCCommand, _ *GUI, _ func(string)) bool {
+		ui.mu.RLock()
+		defer ui.mu.RUnlock()
+		fmt.Println("[INFO] Canais disponíveis:")
+		for _, channel := range ui.channels {
+			if channel == ui.activeChannel {
+				fmt.Printf("  > %s (ativo)\n", channel)
+			} else {
+				fmt.Printf("  - %s\n", channel)
+			}
+		}
+		return true
+	})
+	ui.router.Register("quit", func(cmd *IRCCommand, _ *GUI, _ func(string)) bool {
+		ui.running = false
+		close(ui.done)
+		return true
+	})
+	return ui
 }
 
 // SetInputHandler define a função chamada ao enviar mensagem
@@ -73,7 +108,7 @@ func (ui *BasicUI) AddMessageToChannel(channel, msg string) {
 func (ui *BasicUI) AddLogMessage(msg string) {
 	// Se o modo de depuração estiver ativado, adiciona ao chat
 	if ui.debugMode {
-		ui.AddMessage(fmt.Sprintf("[DEBUG] %s", msg))
+
 	}
 }
 
@@ -196,34 +231,37 @@ func (ui *BasicUI) Run() error {
 	// Inicia o loop de leitura de entrada
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
-		
 		for ui.running {
-			// Lê a entrada do usuário
 			if scanner.Scan() {
 				input := scanner.Text()
-				
-				// Processa comandos especiais da interface
-				if input == "/help" {
-					ui.showHelp()
+				if input == "" {
 					continue
-				} else if input == "/channels" {
-					ui.mu.RLock()
-					fmt.Println("[INFO] Canais disponíveis:")
-					for _, channel := range ui.channels {
-						if channel == ui.activeChannel {
-							fmt.Printf("  > %s (ativo)\n", channel)
-						} else {
-							fmt.Printf("  - %s\n", channel)
-						}
-					}
-					ui.mu.RUnlock()
-					continue
-				} else if input == "/quit" {
-					ui.running = false
-					close(ui.done)
-					return
 				}
-				
+				// Histórico de comandos
+				ui.commandHistory.Add(input)
+				if input == "/prev" {
+					cmd := ui.commandHistory.Prev()
+					if cmd != "" {
+						fmt.Printf("[HISTÓRICO] %s\n", cmd)
+					}
+					continue
+				} else if input == "/next" {
+					cmd := ui.commandHistory.Next()
+					if cmd != "" {
+						fmt.Printf("[HISTÓRICO] %s\n", cmd)
+					}
+					continue
+				}
+				// Despacha comando via roteador
+				if strings.HasPrefix(input, "/") {
+					if ui.router.Dispatch(input, nil, func(fallback string) {
+						if ui.inputHandler != nil {
+							ui.inputHandler(fallback)
+						}
+					}) {
+						continue
+					}
+				}
 				// Se há um handler definido, chama-o
 				if ui.inputHandler != nil {
 					ui.inputHandler(input)
